@@ -1,0 +1,8 @@
+writers: file,stdout
+logger_level: DEBUG
+logger_file: log/chassis.log
+log_format_text: true
+rollingPolicy: size # size, daily
+log_rotate_date: 1
+log_rotate_size: 1
+log_backup_count: 7
