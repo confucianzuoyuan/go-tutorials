@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"time"
 
-	"apiserver/config"
-	"apiserver/model"
-	"apiserver/router"
+	"./config"
+	"./model"
+	"./router"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lexkong/log"

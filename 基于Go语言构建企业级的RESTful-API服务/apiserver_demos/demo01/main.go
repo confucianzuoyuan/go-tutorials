@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"apiserver/router"
+	"./router"
 
 	"github.com/gin-gonic/gin"
 )

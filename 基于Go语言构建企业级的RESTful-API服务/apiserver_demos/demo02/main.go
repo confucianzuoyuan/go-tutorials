@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"apiserver/config"
-	"apiserver/router"
+	"./config"
+	"./router"
 
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/pflag"
