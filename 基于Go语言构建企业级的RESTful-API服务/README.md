@@ -1843,3 +1843,354 @@ $ curl -XGET -H "Content-Type: application/json" http://127.0.0.1:8080/v1/user -
 ```
 
 可以看到用户 kong 未出现在用户列表中，说明他已被成功删除。
+
+# 12, HTTP 调用添加自定义处理逻辑
+
+## 本节核心内容
+
+- 介绍 gin middleware 基本用法
+- 介绍如何用 gin middleware 特性给 API 添加唯一请求 ID 和记录请求信息
+
+>本小节源码下载路径：demo08
+
+## 需求背景
+
+在实际开发中，我们可能需要对每个请求/返回做一些特定的操作，比如记录请求的 log 信息，在返回中插入一个 Header，对部分接口进行鉴权，这些都需要一个统一的入口，逻辑如下：
+
+[](./images/接口逻辑.png)
+
+这个功能可以通过引入 middleware 中间件来解决。Go 的 net/http 设计的一大特点是特别容易构建中间件。apiserver 所使用的 gin 框架也提供了类似的中间件。
+
+## gin middleware 中间件
+
+在 gin 中，可以通过如下方法使用 middleware：
+
+```go
+g := gin.New()
+g.Use(middleware.AuthMiddleware())
+```
+
+其中 middleware.AuthMiddleware() 是 func(*gin.Context) 类型的函数。中间件只对注册过的路由函数起作用。
+
+在 gin 中可以设置 3 种类型的 middleware：
+
+- 全局中间件
+- 单个路由中间件
+- 群组中间件
+
+这里通过一个例子来说明这 3 种中间件。
+
+[](./images/中间件.png)
+
+- 全局中间件：注册中间件的过程之前设置的路由，将不会受注册的中间件所影响。只有注册了中间件之后代码的路由函数规则，才会被中间件装饰。
+- 单个路由中间件：需要在注册路由时注册中间件 r.GET("/benchmark", MyBenchLogger(), benchEndpoint)
+- 群组中间件：只要在群组路由上注册中间件函数即可。
+
+## 中间件实践
+
+为了演示中间件的功能，这里给 apiserver 新增两个功能：
+
+- 在请求和返回的 Header 中插入 X-Request-Id（X-Request-Id 值为 32 位的 UUID，用于唯一标识一次 HTTP 请求）
+- 日志记录每一个收到的请求
+
+### 插入 X-Request-Id
+
+首先需要实现 middleware.RequestId() 中间件，在 router/middleware 目录下新建一个 Go 源文件 requestid.go，内容为（详见 demo08/router/middleware/requestid.go）：
+
+```go
+package middleware
+
+import (
+	"github.com/gin-gonic/gin"
+	"github.com/satori/go.uuid"
+)
+
+func RequestId() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Check for incoming header, use it if exists
+		requestId := c.Request.Header.Get("X-Request-Id")
+
+		// Create request id with UUID4
+		if requestId == "" {
+			u4, _ := uuid.NewV4()
+			requestId = u4.String()
+		}
+
+		// Expose it for use in the application
+		c.Set("X-Request-Id", requestId)
+
+		// Set X-Request-Id header
+		c.Writer.Header().Set("X-Request-Id", requestId)
+		c.Next()
+	}
+}
+```
+
+该中间件调用 github.com/satori/go.uuid 包生成一个 32 位的 UUID，并通过 c.Writer.Header().Set("X-Request-Id", requestId) 设置在返回包的 Header 中。
+
+该中间件是个全局中间件，需要在 main 函数中通过 g.Use() 函数加载：
+
+```go
+func main() {
+    ...
+    // Routes.
+    router.Load(
+        // Cores.
+        g,  
+            
+        // Middlwares.
+        middleware.RequestId(),
+    )       
+    ...
+}
+```
+
+main 函数调用 router.Load()，函数 router.Load() 最终调用 g.Use() 加载该中间件。
+
+### 日志记录请求
+
+同样，需要先实现日志请求中间件 middleware.Logging()，然后在 main 函数中通过 g.Use() 加载该中间件：
+
+```go
+func main() {
+    ...
+    // Routes.
+    router.Load(
+        // Cores.
+        g,  
+            
+        // Middlwares.
+        middleware.Logging(),
+    )       
+    ...
+}
+```
+
+middleware.Logging() 实现稍微复杂点，读者可以直接参考源码实现：demo08/router/middleware/logging.go。
+
+这里有几点需要说明：
+
+1. 该中间件需要截获 HTTP 的请求信息，然后打印请求信息，因为 HTTP 的请求 Body，在读取过后会被置空，所以这里读取完后会重新赋值：
+
+```go
+var bodyBytes []byte
+if c.Request.Body != nil {
+    bodyBytes, _ = ioutil.ReadAll(c.Request.Body)
+}             
+
+// Restore the io.ReadCloser to its original state
+c.Request.Body = ioutil.NopCloser(bytes.NewBuffer(bodyBytes))
+```
+
+2. 截获 HTTP 的 Response 更麻烦些，原理是重定向 HTTP 的 Response 到指定的 IO 流，详见源码文件。
+3. 截获 HTTP 的 Request 和 Response 后，就可以获取需要的信息，最终程序通过 log.Infof() 记录 HTTP 的请求信息。
+4. 该中间件只记录业务请求，比如 /v1/user 和 /login 路径。
+
+## 编译并测试
+
+### 测试 middleware.RequestId() 中间件
+
+发送 HTTP 请求 —— 查询用户列表：
+
+[](./images/发送请求.png)
+
+可以看到，HTTP 返回的 Header 有 32 位的 UUID：X-Request-Id: 1f8b1ae2-8009-4921-b354-86f25022dfa0。
+
+### 测试 middleware.Logging() 中间件
+
+在 API 日志中，可以看到有 HTTP 请求记录：
+
+[](./images/请求记录.png)
+
+日志记录了 HTTP 请求的如下信息，依次为：
+
+1. 耗时
+2. 请求 IP
+3. HTTP 方法 HTTP 路径
+4. 返回的 Code 和 Message
+
+# 13, API 身份验证
+
+## 本节核心内容
+
+- 介绍 API 身份验证的常用机制
+- 介绍如何进行 API 身份验证
+
+>本小节源码下载路径：demo09
+
+## API 身份验证
+
+在典型业务场景中，为了区分用户和安全保密，必须对 API 请求进行鉴权， 但是不能要求每一个请求都进行登录操作。合理做法是，在第一次登录之后产生一个有一定有效期的 token，并将其存储于浏览器的 Cookie 或 LocalStorage 之中，之后的请求都携带该 token ，请求到达服务器端后，服务器端用该 token 对请求进行鉴权。在第一次登录之后，服务器会将这个 token 用文件、数据库或缓存服务器等方法存下来，用于之后请求中的比对。或者，更简单的方法是，直接用密钥对用户信息和时间戳进行签名对称加密，这样就可以省下额外的存储，也可以减少每一次请求时对数据库的查询压力。这种方式，在业界已经有一种标准的实现方式，该方式被称为 JSON Web Token（JWT，音同 jot，详见 JWT RFC 7519）。
+
+>token 的意思是“令牌”，里面包含了用于认证的信息。这里的 token 是指 JSON Web Token（JWT）。
+
+## JWT 简介
+
+### JWT 认证流程
+
+[](./images/jwt.png)
+
+1. 客户端使用用户名和密码请求登录
+2. 服务端收到请求后会去验证用户名和密码，如果用户名和密码跟数据库记录不一致则验证失败，如果一致则验证通过，服务端会签发一个 Token 返回给客户端
+3. 客户端收到请求后会将 Token 缓存起来，比如放在浏览器 Cookie 中或者本地存储中，之后每次请求都会携带该 Token
+4. 服务端收到请求后会验证请求中携带的 Token，验证通过则进行业务逻辑处理并成功返回数据
+
+在 JWT 中，Token 有三部分组成，中间用 . 隔开，并使用 Base64 编码：
+
+- header
+- payload
+- signature
+
+如下是 JWT 中的一个 Token 示例：
+
+```
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE1MjgwMTY5MjIsImlkIjowLCJuYmYiOjE1MjgwMTY5MjIsInVzZXJuYW1lIjoiYWRtaW4ifQ.LjxrK9DuAwAzUD8-9v43NzWBN7HXsSLfebw92DKd1JQ
+```
+
+### header 介绍
+
+JWT Token 的 header 中，包含两部分信息：
+
+1. Token 的类型
+2. Token 所使用的加密算法
+
+例如：
+
+```json
+{
+  "typ": "JWT",
+  "alg": "HS256"
+}
+```
+
+该例说明 Token 类型是 JWT，加密算法是 HS256（alg 算法可以有多种）。
+
+### Payload 载荷介绍
+
+Payload 中携带 Token 的具体内容，里面有一些标准的字段，当然你也可以添加额外的字段，来表达更丰富的信息，可以用这些信息来做更丰富的处理，比如记录请求用户名，标准字段有：
+
+- iss：JWT Token 的签发者
+- sub：主题
+- exp：JWT Token 过期时间
+- aud：接收 JWT Token 的一方
+- iat：JWT Token 签发时间
+- nbf：JWT Token 生效时间
+- jti：JWT Token ID
+
+本例中的 payload 内容为：
+
+```json
+{
+ "id": 2,
+ "username": "kong",
+ "nbf": 1527931805,
+ "iat": 1527931805
+}
+```
+
+### Signature 签名介绍
+
+Signature 是 Token 的签名部分，通过如下方式生成：
+
+1. 用 Base64 对 header.payload 进行编码
+2. 用 Secret 对编码后的内容进行加密，加密后的内容即为 Signature
+
+Secret 相当于一个密码，存储在服务端，一般通过配置文件来配置 Secret 的值，本例中是配置在 conf/config.yaml 配置文件中:
+
+[](./images/secrect)
+
+最后生成的 Token 像这样：
+
+```
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE1MjgwMTY5MjIsImlkIjowLCJuYmYiOjE1MjgwMTY5MjIsInVzZXJuYW1lIjoiYWRtaW4ifQ.LjxrK9DuAwAzUD8-9v43NzWBN7HXsSLfebw92DKd1JQ
+```
+
+签名后服务端会返回生成的 Token，客户端下次请求会携带该 Token，服务端收到 Token 后会解析出 header.payload，然后用相同的加密算法和密码对 header.payload 再进行一次加密，并对比加密后的 Token 和收到的 Token 是否相同，如果相同则验证通过，不相同则返回 HTTP 401 Unauthorized 的错误。
+
+>详细的 JWT 介绍参考 JWT – 基于 Token 的身份验证。
+
+## 如何进行 API 身份验证
+
+API 身份认证包括两步：
+
+1. 签发 token
+2. API 添加认证 middleware
+
+### 签发 token
+
+首先要实现登录接口。在登录接口中采用明文校验用户名密码的方式，登录成功之后再产生 token。在 router/router.go 文件中添加登录入口：
+
+```go
+// api for authentication functionalities
+g.POST("/login", user.Login)
+```
+
+在 handler/user/login.go（详见 demo09/handler/user/login.go）中添加 login 的具体实现：
+
+1. 解析用户名和密码
+2. 通过 auth.Compare() 对比密码是否是数据库保存的密码，如果不是，返回 errno.ErrPasswordIncorrect 错误
+3. 如果相同，授权通过，通过 token.Sign() 签发 token 并返回
+
+>auth.Compare() 的实现详见 demo09/pkg/auth/auth.go。
+>
+>token.Sign() 的实现详见 demo09/pkg/token/token.go。
+
+### API 添加认证 middleware
+
+在 router/router.go 中对 user handler 添加授权 middleware：
+
+[](./images/认证中间件.png)
+
+通过该 middleware，所有对 /v1/user 路径的请求，都会经过 middleware.AuthMiddleware() 中间件的处理：token 校验。middleware.AuthMiddleware() 函数是通过调用 token.ParseRequest() 来进行 token 校验的。
+
+>middleware.AuthMiddleware() 实现详见 demo09/router/middleware/auth.go。
+>
+>token.ParseRequest() 实现详见 demo09/pkg/token/token.go。
+
+## 编译并测试
+
+上文已经介绍过，API 身份验证首先需要登录，登录成功后会签发 token，之后请求时在 HTTP Header 中带上 token 即可。
+
+1. 用户登录
+
+```sh
+$ curl -XPOST -H "Content-Type: application/json" http://127.0.0.1:8080/login -d'{"username":"admin","password":"admin"}'
+
+{
+  "code": 0,
+  "message": "OK",
+  "data": {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE1MjgwMTY5MjIsImlkIjowLCJuYmYiOjE1MjgwMTY5MjIsInVzZXJuYW1lIjoiYWRtaW4ifQ.LjxrK9DuAwAzUD8-9v43NzWBN7HXsSLfebw92DKd1JQ"
+  }
+}
+```
+
+返回的 token 为 eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE1MjgwMTY5MjIsImlkIjowLCJuYmYiOjE1MjgwMTY5MjIsInVzZXJuYW1lIjoiYWRtaW4ifQ.LjxrK9DuAwAzUD8-9v43NzWBN7HXsSLfebw92DKd1JQ。
+
+2. 请求时如果不携带签发的 token，会禁止请求
+
+```sh
+$ curl -XPOST -H "Content-Type: application/json" http://127.0.0.1:8080/v1/user -d'{"username":"user1","password":"user1234"}'
+
+{
+  "code": 20103,
+  "message": "The token was invalid.",
+  "data": null
+}
+```
+
+3. 请求时携带 token
+
+```sh
+$ curl -XPOST -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE1MjgwMTY5MjIsImlkIjowLCJuYmYiOjE1MjgwMTY5MjIsInVzZXJuYW1lIjoiYWRtaW4ifQ.LjxrK9DuAwAzUD8-9v43NzWBN7HXsSLfebw92DKd1JQ" -H "Content-Type: application/json" http://127.0.0.1:8080/v1/user -d'{"username":"user1","password":"user1234"}'
+
+{
+  "code": 0,
+  "message": "OK",
+  "data": {
+    "username": "user1"
+  }
+}
+```
+
+可以看到携带 token 后验证通过，成功创建用户。通过 HTTP Header Authorization: Bearer $token 来携带 token。携带 token 后不需要再次查询数据库核对密码，即可完成授权。
