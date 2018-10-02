@@ -894,3 +894,426 @@ apiserver.log  apiserver.log.20180531134509631.zip
 ```
 
 该 zip 文件就是当 apiserver.log 大小超过 1MB 后，日志系统将之前的日志压缩成 zip 文件后的文件。
+
+# 7, 初始化表
+
+## 创建示例需要的数据库和表
+
+1. 创建 db.sql，内容为：
+
+```sql
+/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
+/*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
+/*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;
+/*!40101 SET NAMES utf8 */;
+/*!40103 SET @OLD_TIME_ZONE=@@TIME_ZONE */;
+/*!40103 SET TIME_ZONE='+00:00' */;
+/*!40014 SET @OLD_UNIQUE_CHECKS=@@UNIQUE_CHECKS, UNIQUE_CHECKS=0 */;
+/*!40014 SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0 */;
+/*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;
+/*!40111 SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;
+
+CREATE DATABASE /*!32312 IF NOT EXISTS*/ `db_apiserver` /*!40100 DEFAULT CHARACTER SET utf8 */;
+
+USE `db_apiserver`;
+
+--
+-- Table structure for table `tb_users`
+--
+
+DROP TABLE IF EXISTS `tb_users`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `tb_users` (
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `username` varchar(255) NOT NULL,
+  `password` varchar(255) NOT NULL,
+  `createdAt` timestamp NULL DEFAULT NULL,
+  `updatedAt` timestamp NULL DEFAULT NULL,
+  `deletedAt` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `username` (`username`),
+  KEY `idx_tb_users_deletedAt` (`deletedAt`)
+) ENGINE=MyISAM AUTO_INCREMENT=2 DEFAULT CHARSET=utf8;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `tb_users`
+--
+
+LOCK TABLES `tb_users` WRITE;
+/*!40000 ALTER TABLE `tb_users` DISABLE KEYS */;
+INSERT INTO `tb_users` VALUES (0,'admin','$2a$10$veGcArz47VGj7l9xN7g2iuT9TF21jLI1YGXarGzvARNdnt4inC9PG','2018-05-27 16:25:33','2018-05-27 16:25:33',NULL);
+/*!40000 ALTER TABLE `tb_users` ENABLE KEYS */;
+UNLOCK TABLES;
+/*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
+
+/*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
+/*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS */;
+/*!40014 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS */;
+/*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
+/*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;
+/*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
+/*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
+
+-- Dump completed on 2018-05-28  0:25:41
+```
+
+2. 登录 MySQL:
+
+```
+$ mysql -uroot -p 
+```
+
+3. source db.sql
+
+```
+mysql> source db.sql
+```
+
+可以看到，db.sql 创建了 db_apiserver 数据库和 tb_users 表，并默认添加了一条记录（用户名：admin，密码：admin）：
+
+```sql
+mysql> select * from tb_users \G;
+*************************** 1. row ***************************
+       id: 0
+ username: admin
+ password: $2a$10$veGcArz47VGj7l9xN7g2iuT9TF21jLI1YGXarGzvARNdnt4inC9PG
+createdAt: 2018-05-28 00:25:33
+updatedAt: 2018-05-28 00:25:33
+deletedAt: NULL
+1 row in set (0.00 sec)
+```
+
+## 在配置文件中添加数据库配置
+
+API 启动需要连接数据库，所以需要在配置文件 conf/config.yaml 中配置数据库的 IP、端口、用户名、密码和数据库名信息。
+
+[](./images/数据库配置.png)
+
+# 8, 初始化 MySQL 数据库并建立连接
+
+## 本节核心内容
+
+- Go ORM 数量众多，我们介绍一个比较好的 ORM 包，并给出原因
+- 介绍如何初始化数据库
+- 介绍如何连接数据库
+
+>源码在 demo04
+
+apiserver 用的 ORM 是 GitHub 上 star 数最多的 gorm，相较于其他 ORM，它用起来更方便，更稳定，社区也更活跃。
+
+## 初始化数据库
+
+在 model/init.go 中添加数据初始化代码
+
+因为一个 API 服务器可能需要同时访问多个数据库，为了对多个数据库进行初始化和连接管理，这里定义了一个叫 Database 的 struct：
+
+```go
+type Database struct {
+    Self   *gorm.DB
+    Docker *gorm.DB
+}
+```
+
+Database 结构体有个 Init() 方法用来初始化连接：
+
+```go
+func (db *Database) Init() {
+    DB = &Database {
+        Self:   GetSelfDB(),
+        Docker: GetDockerDB(),
+    }
+}
+```
+
+Init() 函数会调用 GetSelfDB() 和 GetDockerDB() 方法来同时创建两个 Database 的数据库对象。这两个 Get 方法最终都会调用 func openDB(username, password, addr, name string) *gorm.DB 方法来建立数据库连接，不同数据库实例传入不同的 username、password、addr 和名字信息，从而建立不同的数据库连接。openDB 函数为：
+
+```go
+func openDB(username, password, addr, name string) *gorm.DB {
+    config := fmt.Sprintf("%s:%s@tcp(%s)/%s?charset=utf8&parseTime=%t&loc=%s",
+        username,
+        password,
+        addr,
+        name,
+        true,
+        //"Asia/Shanghai"),
+        "Local")
+
+    db, err := gorm.Open("mysql", config)
+    if err != nil {
+        log.Errorf(err, "Database connection failed. Database name: %s", name)
+    }  
+
+    // set for db connection
+    setupDB(db)
+
+    return db
+}
+```
+
+可以看到，openDB() 最终调用 gorm.Open() 来建立一个数据库连接。
+
+完整的 model/init.go 源码文件请参考 demo04/model/init.go。
+
+### 主函数中增加数据库初始化入口
+
+```go
+package main
+
+import (
+    ...
+    "apiserver/model"
+
+    ...
+)
+
+...
+
+func main() {
+    ...
+
+    // init db
+    model.DB.Init()
+    defer model.DB.Close()
+
+    ...
+}
+```
+
+通过 model.DB.Init() 来建立数据库连接，通过 defer model.DB.Close() 来关闭数据库连接。
+
+# 9, 自定义业务错误信息
+
+## 本节核心内容
+
+- 如何自定义业务自己的错误信息
+- 实际开发中是如何处理错误的
+- 实际开发中常见的错误类型
+- 通过引入新包 errno 来实现此功能，会展示该包的如下用法：
+    - 如何新建 Err 类型的错误
+    - 如何从 Err 类型的错误中获取 code 和 message
+
+>源码路径：demo05
+
+## 为什么要定制业务自己的错误码
+
+在实际开发中引入错误码有如下好处：
+
+- 可以非常方便地定位问题和定位代码行（看到错误码知道什么意思，grep 错误码可以定位到错误码所在行）
+- 如果 API 对外开放，有个错误码会更专业些
+- 错误码包含一定的信息，通过错误码可以判断出错误级别、错误模块和具体错误信息
+- 在实际业务开发中，一个条错误信息需要包含两部分内容：直接展示给用户的 message 和用于开发人员 debug 的 error 。message 可能会直接展示给用户，error 是用于 debug 的错误信息，可能包含敏感/内部信息，不宜对外展示
+- 业务开发过程中，可能需要判断错误是哪种类型以便做相应的逻辑处理，通过定制的错误码很容易做到这点，例如：
+
+```go
+    if err == errno.ErrBind {
+        ...
+    }
+```
+
+- Go 中的 HTTP 服务器开发都是引用 net/http 包，该包中只有 60 个错误码，基本都是跟 HTTP 请求相关的。在大型系统中，这些错误码完全不够用，而且跟业务没有任何关联，满足不了业务需求。
+
+## 在 apiserver 中引入错误码
+
+我们通过一个新包 errno 来做错误码的定制，详见 demo05/pkg/errno。
+
+```
+$ ls pkg/errno/
+code.go  errno.go
+```
+
+errno 包由两个 Go 文件组成：code.go 和 errno.go。code.go 用来统一存自定义的错误码，code.go 的代码为：
+
+```go
+package errno
+
+var (
+    // Common errors
+    OK                  = &Errno{Code: 0, Message: "OK"}
+    InternalServerError = &Errno{Code: 10001, Message: "Internal server error"}
+    ErrBind             = &Errno{Code: 10002, Message: "Error occurred while binding the request body to the struct."}
+
+    // user errors
+    ErrUserNotFound      = &Errno{Code: 20102, Message: "The user was not found."}
+)
+```
+
+### 代码解析
+
+在实际开发中，一个错误类型通常包含两部分：Code 部分，用来唯一标识一个错误；Message 部分，用来展示错误信息，这部分错误信息通常供前端直接展示。这两部分映射在 errno 包中即为 &Errno{Code: 0, Message: "OK"}。
+
+### 错误码设计
+
+目前错误码没有一个统一的设计标准，笔者研究了 BAT 和新浪开放平台对外公布的错误码设计，参考新浪开放平台 Error code 的设计，如下是设计说明：
+
+错误返回值格式：
+
+```json
+{
+  "code": 10002,
+  "message": "Error occurred while binding the request body to the struct."
+}
+```
+
+错误代码说明：
+
+| 1 | 00 | 02 |
+|---|----|----|
+| 服务级错误（1 为系统级错误）| 服务模块代码 | 具体错误代码 |
+
+- 服务级别错误：1 为系统级错误；2 为普通错误，通常是由用户非法操作引起的
+- 服务模块为两位数：一个大型系统的服务模块通常不超过两位数，如果超过，说明这个系统该拆分了
+- 错误码为两位数：防止一个模块定制过多的错误码，后期不好维护
+- code = 0 说明是正确返回，code > 0 说明是错误返回
+- 错误通常包括系统级错误码和服务级错误码
+- 建议代码中按服务模块将错误分类
+- 错误码均为 >= 0 的数
+- 在 apiserver 中 HTTP Code 固定为 http.StatusOK，错误码通过 code 来表示。
+
+## 错误信息处理
+
+通过 errno.go 来对自定义的错误进行处理，errno.go 的代码为：
+
+```go
+package errno
+
+import "fmt"
+
+type Errno struct {
+	Code    int
+	Message string
+}
+
+func (err Errno) Error() string {
+	return err.Message
+}
+
+// Err represents an error
+type Err struct {
+	Code    int
+	Message string
+	Err     error
+}
+
+func New(errno *Errno, err error) *Err {
+	return &Err{Code: errno.Code, Message: errno.Message, Err: err}
+}
+
+func (err *Err) Add(message string) error {
+	err.Message += " " + message
+	return err
+}
+
+func (err *Err) Addf(format string, args ...interface{}) error {
+	err.Message += " " + fmt.Sprintf(format, args...)
+	return err
+}
+
+func (err *Err) Error() string {
+	return fmt.Sprintf("Err - code: %d, message: %s, error: %s", err.Code, err.Message, err.Err)
+}
+
+func IsErrUserNotFound(err error) bool {
+	code, _ := DecodeErr(err)
+	return code == ErrUserNotFound.Code
+}
+
+func DecodeErr(err error) (int, string) {
+	if err == nil {
+		return OK.Code, OK.Message
+	}
+
+	switch typed := err.(type) {
+	case *Err:
+		return typed.Code, typed.Message
+	case *Errno:
+		return typed.Code, typed.Message
+	default:
+	}
+
+	return InternalServerError.Code, err.Error()
+}
+```
+
+### 代码解析
+
+errno.go 源码文件中有两个核心函数 New() 和 DecodeErr()，一个用来新建定制的错误，一个用来解析定制的错误，稍后会介绍如何使用。
+
+errno.go 同时也提供了 Add() 和 Addf() 函数，如果想对外展示更多的信息可以调用此函数，使用方法下面有介绍。
+
+## 错误码实战
+
+上面介绍了错误码的一些知识，这一部分讲开发中是如何使用 errno 包来处理错误信息的。为了演示，我们新增一个创建用户的 API：
+
+1. router/router.go 中添加路由，详见 demo05/router/router.go：
+
+[](./images/添加路由.png)
+
+2. handler 目录下增加业务处理函数 handler/user/create.go，详见 demo05/handler/user/create.go。
+
+## 编译并运行
+
+## 测试验证
+
+启动 apiserver：./apiserver
+
+```
+$ curl -XPOST -H "Content-Type: application/json" http://127.0.0.1:8080/v1/user
+
+{
+  "code": 10002,
+  "message": "Error occurred while binding the request body to the struct."
+}
+```
+
+因为没有传入任何参数，所以返回 errno.ErrBind 错误。
+
+```
+$ curl -XPOST -H "Content-Type: application/json" http://127.0.0.1:8080/v1/user -d'{"username":"admin"}'
+
+{
+  "code": 10001,
+  "message": "password is empty"
+}
+```
+
+因为没有传入 password，所以返回 fmt.Errorf("password is empty") 错误，该错误信息不是定制的错误类型，errno.DecodeErr(err) 解析时会解析为默认的 errno.InternalServerError 错误，所以返回结果中 code 为 10001，message 为 err.Error()。
+
+```
+$ curl -XPOST -H "Content-Type: application/json" http://127.0.0.1:8080/v1/user -d'{"password":"admin"}'
+
+{
+  "code": 20102,
+  "message": "The user was not found. This is add message."
+}
+```
+
+因为没有传入 username，所以返回 errno.ErrUserNotFound 错误信息，并通过 Add() 函数在 message 信息后追加了 This is add message. 信息。
+
+通过
+
+```go
+   if errno.IsErrUserNotFound(err) {
+        log.Debug("err type is ErrUserNotFound")
+    }
+```
+
+演示了如何通过定制错误方便地对比是不是某个错误，在该请求中，apiserver 会输出如下错误：
+
+[](./images/输出错误.png)
+
+可以看到在后台日志中会输出敏感信息 username can not found in db: xx.xx.xx.xx，但是返回给用户的 message （{"code":20102,"message":"The user was not found. This is add message."}）不包含这些敏感信息，可以供前端直接对外展示。
+
+```
+$ curl -XPOST -H "Content-Type: application/json" http://127.0.0.1:8080/v1/user -d'{"username":"admin","password":"admin"}'
+
+{
+  "code": 0,
+  "message": "OK"
+}
+```
+
+如果 err = nil，则 errno.DecodeErr(err) 会返回成功的 code: 0 和 message: OK。
+
+>如果 API 是对外的，错误信息数量有限，则制定错误码非常容易，强烈建议使用错误码。如果是内部系统，特别是庞大的系统，内部错误会非常多，这时候没必要为每一个错误制定错误码，而只需为常见的错误制定错误码，对于普通的错误，系统在处理时会统一作为 InternalServerError 处理。
