@@ -1,9 +1,9 @@
 package user
 
 import (
-	. "apiserver/handler"
-	"apiserver/pkg/errno"
-	"apiserver/service"
+	. "../../handler"
+	"../../pkg/errno"
+	"../../service"
 
 	"github.com/gin-gonic/gin"
 )

@@ -5,10 +5,10 @@ import (
 	"net/http"
 	"time"
 
-	"apiserver/config"
-	"apiserver/model"
-	"apiserver/router"
-	"apiserver/router/middleware"
+	"./config"
+	"./model"
+	"./router"
+	"./router/middleware"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lexkong/log"

@@ -1,11 +1,11 @@
 package user
 
 import (
-	. "apiserver/handler"
-	"apiserver/model"
-	"apiserver/pkg/auth"
-	"apiserver/pkg/errno"
-	"apiserver/pkg/token"
+	. "../../handler"
+	"../../model"
+	"../../pkg/auth"
+	"../../pkg/errno"
+	"../../pkg/token"
 
 	"github.com/gin-gonic/gin"
 )

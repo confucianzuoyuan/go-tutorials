@@ -1,7 +1,7 @@
 package user
 
 import (
-	"apiserver/model"
+	"../../model"
 )
 
 type CreateRequest struct {

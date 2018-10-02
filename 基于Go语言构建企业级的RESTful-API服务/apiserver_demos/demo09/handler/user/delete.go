@@ -3,9 +3,9 @@ package user
 import (
 	"strconv"
 
-	. "apiserver/handler"
-	"apiserver/model"
-	"apiserver/pkg/errno"
+	. "../../handler"
+	"../../model"
+	"../../pkg/errno"
 
 	"github.com/gin-gonic/gin"
 )
