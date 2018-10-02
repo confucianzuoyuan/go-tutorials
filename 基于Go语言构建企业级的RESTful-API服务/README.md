@@ -2415,3 +2415,553 @@ help:
 ```sh
 $ make
 ```
+
+# 16, 给 API 命令增加版本功能
+
+## 本节核心内容
+
+- 如何给 apiserver 增加版本功能
+
+>本小节源码下载路径：demo12
+
+## 为什么需要版本
+
+在实际开发中，当开发完一个 apiserver 特性后，会编译 apiserver 二进制文件并发布到生产环境，很多时候为了定位问题和出于安全目的（不能发错版本），我们需要知道当前 apiserver 的版本，以及一些编译时候的信息，如编译时 Go 的版本、Git 目录是否 clean，以及基于哪个 git commmit 来编译的。在一个编译好的可执行程序中，我们通常可以用类似 ./app_name -v 的方式来获取版本信息。
+
+我们可以将这些信息写在配置文件中，程序运行时从配置文件中取得这些信息进行显示。但是在部署程序时，除了二进制文件还需要额外的配置文件，不是很方便。或者将这些信息写入代码中，这样不需要额外的配置，但要在每次编译时修改代码文件，也比较麻烦。Go 官方提供了一种更好的方式：通过 -ldflags -X importpath.name=value（详见 -ldflags -X importpath.name=value）来给程序自动添加版本信息。
+
+>在实际开发中，绝大部分都是用 Git 来做源码版本管理的，所以 apiserver 的版本功能也基于 Git。
+
+## 给 apiserver 添加版本功能
+
+假设我们程序发布的流程是这样：
+
+- 编码完成，提交测试工程师测试
+- 测试工程师测试代码，提交 bug，更改 bug 并重新测试后验证通过
+- 开发人员把验证通过的代码合并到 master 分支，并打上版本号：git tag -a v1.0.0
+- 开发人员将 v1.0.0 版本发布到生产环境
+
+最终发布后，我们希望通过 ./apiserver -v 参数提供如下版本信息：
+
+- 版本号
+- git commit
+- git tree 在编译时的状态
+- 构建时间
+- go 版本
+- go 编译器
+- 运行平台
+
+为了实现这些功能，我们首先要在 main 函数中添加用于接收 -v 参数的入口（详见 demo12/main.go）：
+
+```go
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	...
+	v "apiserver/pkg/version"
+	...
+)
+
+var (
+	version = pflag.BoolP("version", "v", false, "show version info.")
+)
+
+func main() {
+	pflag.Parse()
+	if *version {
+		v := v.Get()
+		marshalled, err := json.MarshalIndent(&v, "", "  ")
+		if err != nil {
+			fmt.Printf("%v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Println(string(marshalled))
+		return
+	}
+	...
+}
+```
+
+通过 pflag 来解析命令行上传入的 -v 参数。
+
+通过 pkg/version 的 Get() 函数来获取 apiserver 的版本信息。
+
+通过 json.MarshalIndent 来格式化打印版本信息。
+
+pkg/version 的 Get() 函数实现为（详见 demo12/pkg/version）：
+
+```go
+func Get() Info {
+	return Info{
+		GitTag:       gitTag,
+		GitCommit:    gitCommit,
+		GitTreeState: gitTreeState,
+		BuildDate:    buildDate,
+		GoVersion:    runtime.Version(),
+		Compiler:     runtime.Compiler,
+		Platform:     fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
+	}
+}
+```
+
+其中 gitTag、gitCommit、gitTreeState 等变量的值是通过 -ldflags -X importpath.name=value 在编译时传到程序中的。为此我们需要在编译时传入这些信息，在 Makefile 中添加如下信息（详见 demo12/Makefile）：
+
+```makefile
+SHELL := /bin/bash 
+BASEDIR = $(shell pwd)
+
+# build with verison infos
+versionDir = "apiserver/pkg/version"
+gitTag = $(shell if [ "`git describe --tags --abbrev=0 2>/dev/null`" != "" ];then git describe --tags --abbrev=0; else git log --pretty=format:'%h' -n 1; fi)
+buildDate = $(shell TZ=Asia/Shanghai date +%FT%T%z)
+gitCommit = $(shell git log --pretty=format:'%H' -n 1)
+gitTreeState = $(shell if git status|grep -q 'clean';then echo clean; else echo dirty; fi)
+ 
+ldflags="-w -X ${versionDir}.gitTag=${gitTag} -X ${versionDir}.buildDate=${buildDate} -X ${versionDir}.gitCommit=${gitCommit} -X ${versionDir}.gitTreeState=${gitTreeState}"
+```
+
+并在 go build 中添加这些 flag：
+
+```makefile
+go build -v -ldflags ${ldflags} .
+```
+
+>-w 为去掉调试信息（无法使用 gdb 调试），这样可以使编译后的二进制文件更小。
+
+## 编译并测试
+
+```sh
+$ cd $GOPATH/src/apiserver
+$ make
+```
+
+### 查看 apiserver 版本
+
+```sh
+$ ./apiserver -v
+
+{
+  "gitTag": "7322949",
+  "gitCommit": "732294928b3c4dff5b898fde0bb5313752e1173e",
+  "gitTreeState": "dirty",
+  "buildDate": "2018-06-05T07:43:26+0800",
+  "goVersion": "go1.10.2",
+  "compiler": "gc",
+  "platform": "linux/amd64"
+}
+```
+
+可以看到 ./apiserver -v 输出了我们需要的版本信息。
+
+>在上一小节中我们已经给 apiserver 添加过 Makefile 文件。
+
+# 17, 给 API 增加启动脚本
+
+## 本节核心内容
+
+- 如何管理 apiserver 启动命令，包括启动、重启、停止和查看运行状态
+
+>本小节源码下载路径：demo13
+
+## 为什么要添加启动脚本
+
+通过添加服务器启动脚本可以很方便地启动、重启、停止和查看服务的状态。一些监控系统、发布系统需要有方法告诉它怎么启停和查看服务状态，这时候如果有个服务控制脚本就可以很方便地添加，要不然输入一堆启动参数不仅烦琐还容易出错。
+
+## 添加启动脚本
+
+apiserver 是通过 admin.sh 脚本来实现服务启动、重启、停止和查看服务状态操作的（详见 demo13/admin.sh），源码为：
+
+```sh
+#!/bin/bash
+
+SERVER="apiserver"
+BASE_DIR=$PWD
+INTERVAL=2
+
+# 命令行参数，需要手动指定
+ARGS=""
+
+function start()
+{
+	if [ "`pgrep $SERVER -u $UID`" != "" ];then
+		echo "$SERVER already running"
+		exit 1
+	fi
+
+	nohup $BASE_DIR/$SERVER $ARGS  server &>/dev/null &
+
+	echo "sleeping..." &&  sleep $INTERVAL
+
+	# check status
+	if [ "`pgrep $SERVER -u $UID`" == "" ];then
+		echo "$SERVER start failed"
+		exit 1
+	fi
+}
+
+function status() 
+{
+	if [ "`pgrep $SERVER -u $UID`" != "" ];then
+		echo $SERVER is running
+	else
+		echo $SERVER is not running
+	fi
+}
+
+function stop() 
+{
+	if [ "`pgrep $SERVER -u $UID`" != "" ];then
+		kill -9 `pgrep $SERVER -u $UID`
+	fi
+
+	echo "sleeping..." &&  sleep $INTERVAL
+
+	if [ "`pgrep $SERVER -u $UID`" != "" ];then
+		echo "$SERVER stop failed"
+		exit 1
+	fi
+}
+
+case "$1" in
+	'start')
+	start
+	;;  
+	'stop')
+	stop
+	;;  
+	'status')
+	status
+	;;  
+	'restart')
+	stop && start
+	;;  
+	*)  
+	echo "usage: $0 {start|stop|restart|status}"
+	exit 1
+	;;  
+esac
+```
+
+>看 shell 源码发现在 start 和 stop 时会 sleep 几秒，这是因为 API 服务器的启动需要时间去做准备工作，停止也需要时间去做清理工作。
+
+## 编译并测试
+
+### 查看 admin.sh 用法
+
+```sh
+$ ./admin.sh -h
+usage: ./admin.sh {start|stop|restart|status}
+```
+
+### 查看 apiserver 运行状态
+
+```sh
+$ ./admin.sh status
+apiserver is not running
+```
+
+### 启动 apiserver
+
+```sh
+$ ./admin.sh start
+sleeping...
+```
+
+### 查看 apiserver 状态
+
+```sh
+$ ./admin.sh status
+apiserver is running
+```
+
+### 重启 apiserver
+
+```sh
+$ ./admin.sh restart
+sleeping...
+sleeping...
+```
+
+### 停止 apiserver
+
+```sh
+$ ./admin.sh stop
+sleeping...
+```
+
+# 18, 基于 Nginx 的 API 部署方案
+
+## 本节核心内容
+
+- 介绍 Nginx
+- 介绍如何安装 Nginx
+- 介绍如何配置 Nginx
+
+>本小节源码下载路径：demo14
+
+## Nginx 介绍
+
+Nginx 是一个自由、开源、高性能及轻量级的 HTTP 服务器和反向代理服务器，它有很多功能，主要功能为：
+
+1. 正向代理
+2. 反向代理
+3. 负载均衡
+4. HTTP 服务器（包含动静分离）
+
+本节课使用了 Nginx 反向代理和负载均衡的功能。
+
+>Nginx 的更详细介绍可以参考 [nginx简易教程](https://www.cnblogs.com/jingmoxukong/p/5945200.html)。
+
+## Nginx 反向代理功能
+
+Nginx 最常用的功能之一是作为一个反向代理服务器。反向代理（Reverse Proxy）是指以代理服务器来接收 Internet 上的连接请求，然后将请求转发给内部网络上的服务器，并将从服务器上得到的结果返回给 Internet 上请求连接的客户端，此时代理服务器对外就表现为一个反向代理服务器（摘自百度百科）。
+
+为什么需要反向代理呢？在实际的生产环境中，服务部署的网络（内网）跟外部网络（外网）通常是不通的，需要通过一台既能够访问内网又能够访问外网的服务器来做中转，这种服务器就是反向代理服务器。Nginx 作为反向代理服务器，简单的配置如下：
+
+```nginx
+server {
+    listen      80;
+    server_name  apiserver.com;
+    client_max_body_size 1024M;
+
+    location / {
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_pass  http://127.0.0.1:8080/;
+        client_max_body_size 100m;
+    }
+}
+```
+
+Nginx 在做反向代理服务器时，能够根据不同的配置规则转发到后端不同的服务器上。
+
+## Nginx 负载均衡功能
+
+Nginx 另一个常用的功能是负载均衡，所谓的负载均衡就是指当 Nginx 收到一个 HTTP 请求后，会根据负载策略将请求转发到不同的后端服务器上。比如，apiserver 部署在两台服务器 A 和 B 上，当请求到达 Nginx 后，Nginx 会根据 A 和 B 服务器上的负载情况，将请求转发到负载较小的那台服务器上。这里要求 apiserver 是无状态的服务。
+
+## Nginx 常用命令
+
+Nginx 常用命令如下（执行 which nginx 可以找到 Nginx 命令所在的路径）：
+
+```
+nginx -s stop       快速关闭 Nginx，可能不保存相关信息，并迅速终止 Web 服务
+nginx -s quit       平稳关闭 Nginx，保存相关信息，有安排的结束 Web 服务
+nginx -s reload     因改变了 Nginx 相关配置，需要重新加载配置而重载
+nginx -s reopen     重新打开日志文件
+nginx -c filename   为 Nginx 指定一个配置文件，来代替默认的
+nginx -t            不运行，而仅仅测试配置文件。Nginx 将检查配置文件的语法的正确性，并尝试打开配置文件中所引用到的文件
+nginx -v            显示 Nginx 的版本
+nginx -V            显示 Nginx 的版本、编译器版本和配置参数
+```
+
+>Nginx 默认监听 80 端口，启动 Nginx 前要确保 80 端口没有被占用。当然你也可以通过修改 Nginx 配置文件 /etc/nginx/nginx.conf 改 Nginx 监听端口。
+
+## 配置 Nginx 作为反向代理
+
+假定要访问的 API 服务器域名为 apiserver.com，在 /etc/nginx/nginx.conf 配置 API 服务器的 server 入口：
+
+[](./images/nginx.png)
+
+完成 nginx.conf 内容如下：
+
+```nginx
+user  nginx;
+worker_processes  1;
+
+error_log  /var/log/nginx/error.log warn;
+pid        /var/run/nginx.pid;
+
+
+events {
+    worker_connections  1024;
+}
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+
+    log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                      '$status $body_bytes_sent "$http_referer" '
+                      '"$http_user_agent" "$http_x_forwarded_for"';
+
+    access_log  /var/log/nginx/access.log  main;
+
+    sendfile        on;
+    #tcp_nopush     on;
+
+    keepalive_timeout  65;
+
+    #gzip  on;
+
+    include /etc/nginx/conf.d/*.conf;
+
+    server {  
+        listen      80;
+        server_name  apiserver.com;
+        client_max_body_size 1024M;
+
+        location / {
+            proxy_set_header Host $http_host;
+            proxy_set_header X-Forwarded-Host $http_host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_pass  http://127.0.0.1:8080/;
+            client_max_body_size 5m;
+        }
+    }
+}
+```
+
+### 配置说明
+
+- 由于 Nginx 默认允许客户端请求的最大单文件字节数为 1MB，实际生产环境中可能太小，所以这里将此限制改为 5MB（client_max_body_size 5m）
+- server_name：说明使用哪个域名来访问
+- proxy_pass：反向代理的路径（这里是本机的 API 服务，所以IP为 127.0.0.1。端口要和 API 服务端口一致：8080）
+
+>如果需要上传图片之类的，可能需要设置成更大的值，比如 50m。
+>
+>因为 Nginx 配置选项比较多，跟实际需求和环境有关，所以这里的配置是基础的、未经优化的配置，在实际生产环境中，需要大家再做调节。
+
+### 测试
+
+1. 配置完 Nginx 后重启 Nginx
+
+```sh
+$ systemctl restart nginx
+```
+
+2. 在编译完 apiserver 后，启动 API 服务器
+
+```sh
+$ ./apiserver
+```
+
+3. 在 /etc/hosts 中添加一行：127.0.0.1 apiserver.com
+
+4. 发送 HTTP 请求
+
+```sh
+$ curl -XGET -H "Content-Type: application/json" -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE1MjgwMTY5MjIsImlkIjowLCJuYmYiOjE1MjgwMTY5MjIsInVzZXJuYW1lIjoiYWRtaW4ifQ.LjxrK9DuAwAzUD8-9v43NzWBN7HXsSLfebw92DKd1JQ" http://apiserver.com/v1/user 
+
+{
+  "code": 0,
+  "message": "OK",
+  "data": {
+    "totalCount": 1,
+    "userList": [
+      {
+        "id": 0,
+        "username": "admin",
+        "sayHello": "Hello Jypl3DSig",
+        "password": "$2a$10$veGcArz47VGj7l9xN7g2iuT9TF21jLI1YGXarGzvARNdnt4inC9PG",
+        "createdAt": "2018-05-28 00:25:33",
+        "updatedAt": "2018-05-28 00:25:33"
+      }
+    ]
+  }
+}
+```
+
+可以看到成功通过代理访问后端的 API 服务。
+
+### 请求流程说明
+
+在用 curl 请求 http://apiserver.com/v1/user 后，后端的请求流程实际上是这样的：
+
+1. 因为在 /etc/hosts 中配置了 127.0.0.1 apiserver.com，所以请求 http://apiserver.com/v1/use 实际上是请求本机的 Nginx 端口（127.0.0.1:80）
+2. Nginx 在收到请求后，解析到请求域名为 apiserver.com，根据请求域名去匹配 Nginx 的 server 配置，匹配到 server_name apiserver.com 配置
+3. 匹配到 server 后，把请求转发到该 server 的 proxy_pass 路径
+4. 等待 API 服务器返回结果，并返回客户端
+
+## 配置 Nginx 作为负载均衡
+
+负载均衡的演示需要多个后端服务，为此我们在同一个服务器上启动多个 apiserver，配置不同的端口（8080、8082），并采用 Nginx 默认的轮询转发策略（轮询：每个请求按时间顺序逐一分配到不同的后端服务器）。
+
+在 /etc/nginx/nginx.conf 中添加 upstream 配置：
+
+[](./images/负载均衡.png)
+
+### 配置说明
+
+- 因为有多个后端，所以需要将之前固定的后端 proxy_pass http://127.0.0.1:8080/ 换成具有多个后端的 apiserver.com（通过 upstream）
+- upstream 配置中配置多个后端（ip:port）
+
+```nginx
+    upstream apiserver.com {
+        server 127.0.0.1:8080;
+        server 127.0.0.1:8082;
+    }
+```
+
+### 测试
+
+1. 配置完 Nginx 后重启 Nginx
+
+```sh
+$ systemctl restart nginx
+```
+
+2. 这里需要构建并发请求，编写测试脚本 test.sh，内容为：
+
+```sh
+#!/bin/bash
+
+
+for n in $(seq 1 1 10)
+do
+    nohup curl -XGET -H "Content-Type: application/json" -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE1MjgwMTY5MjIsImlkIjowLCJuYmYiOjE1MjgwMTY5MjIsInVzZXJuYW1lIjoiYWRtaW4ifQ.LjxrK9DuAwAzUD8-9v43NzWBN7HXsSLfebw92DKd1JQ" http://apiserver.com/v1/user &>/dev/null
+done
+```
+
+3. 为了展示哪个 API 被调用，需要在查询用户列表的入口函数（handler/user/list.go文件中的 List() 函数）中添加日志打印信息：
+
+[](./images/展示.png)
+
+4. 在相同服务器上启动两个不同的 HTTP 端口：8080 和 8082
+5. 执行 test.sh 脚本
+
+```sh
+$ ./test.sh
+```
+
+观察 API 日志，可以看到请求被均衡地转发到后端的两个服务：
+
+apiserver1（8080 端口）：
+
+[](./images/转发.png)
+
+apiserver2（8082 端口）:
+
+[](./images/转发2)
+
+在生产环境中，API 服务器所在的网络通常不能直接通过外网访问，需要通过可从外网访问的 Nginx 服务器，将请求转发到内网的 API 服务器。并且随着业务规模越来越大，请求量也会越来越大，这时候需要将 API 横向扩容，也需要 Nginx。所以在实际的 API 服务部署中 Nginx 经常能派上用场。通过本小节的学习，大家可以了解到如何在实际生产环境中部署 API 服务。
+
+# 19, API 高可用方案
+
+本小节为可选小节。因为该方案需要有至少两台服务器，只需要了解即可。
+
+## 方案介绍
+
+Nginx 自带负载均衡功能，并且当 Nginx 后端某个服务器挂掉后，Nginx 会自动剔除该服务器，将请求转发到可用的服务器，通过这种方式实现了后端 API 服务的高可用（HA）。但是 Nginx 是单点的，如果 Nginx 挂了，后端的所有服务器就都不能访问，所以在实际生产环境中，也需要对 Nginx 做高可用。
+
+Keepalived 是一个高性能的服务器高可用或热备解决方案，Keepalived 主要来防止服务器单点故障的发生问题，可以通过 Keepalived 对前端 Nginx 实现高可用。Keepalived + Nginx 的高可用方案具有如下特点：
+
+1. 服务功能强大
+2. 维护简单
+
+## Keepalived 简介
+
+Keepalived 以 VRRP 协议为基础来实现高可用性。VRRP（Virtual Router Redundancy Protocol，虚拟路由冗余协议）是用于实现路由器冗余的协议，它将两台或多台路由器设备虚拟成一个设备，对外提供虚拟路由器 IP（一个或多个），如下图所示。
+
+[](./images/keepalive.png)
+
+在上图中，将 Nginx + Keepalived 部署在两台服务器上，拥有两个真实的 IP（IP1 和 IP2），通过一定的技术（如 LVS）虚拟出一个虚拟 IP（VIP），外界请求通过访问 VIP 来访问服务。在两台 Nginx + Keepalived 的服务器上，同一时间只有一台会接管 VIP（叫做 Master）提供服务，另一台（叫做 Slave）会检测 Master 的心跳，当发现 Master 停止心跳后，Slave 会自动接管 VIP 以提供服务（此时，Slave 变成 Master）。通过这种方式来实现 Nginx 的高可用，通过第 19 节可以知道，Nginx 可以对后台 API 服务器做高可用，这样通过 Nginx + Keepalived 的组合方案就实现了整个 API 集群的高可用。
+
+## 部署
+Keepalived + Nginx 的部署方案网上有很多详细的教程。请参考 [Keepalived+Nginx实现高可用（HA）](https://blog.csdn.net/xyang81/article/details/52556886)。
