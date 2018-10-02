@@ -451,3 +451,446 @@ OK - Free space: 455MB (0GB) / 8192MB (8GB) | Used: 5%
 ```
 
 可以看到 HTTP 服务器均能正确响应请求。
+
+# 5, 配置文件读取
+
+## 本节核心内容
+
+- 介绍 apiserver 所采用的配置解决方案
+- 介绍如何配置 apiserver 并读取其配置，以及配置的高级用法
+
+本小节使用`demo2`中的代码。
+
+## Viper 简介
+
+Viper 是国外大神 spf13 编写的开源配置解决方案，具有如下特性:
+
+- 设置默认值
+- 可以读取如下格式的配置文件：JSON、TOML、YAML、HCL
+- 监控配置文件改动，并热加载配置文件
+- 从环境变量读取配置
+- 从远程配置中心读取配置（etcd/consul），并监控变动
+- 从命令行 flag 读取配置
+- 从缓存中读取配置
+- 支持直接设置配置项的值
+
+Viper 配置读取顺序：
+
+- `viper.Set()` 所设置的值
+- 命令行 flag
+- 环境变量
+- 配置文件
+- 配置中心：etcd/consul
+- 默认值
+
+从上面这些特性来看，Viper 毫无疑问是非常强大的，而且 Viper 用起来也很方便，在初始化配置文件后，读取配置只需要调用 `viper.GetString()`、`viper.GetInt()` 和 `viper.GetBool()` 等函数即可。
+
+Viper 也可以非常方便地读取多个层级的配置，比如这样一个 YAML 格式的配置：
+
+```yaml
+common:
+  database:
+    name: test
+    host: 127.0.0.1
+```
+
+如果要读取 host 配置，执行 `viper.GetString("common.database.host")` 即可。
+
+apiserver 采用 YAML 格式的配置文件，采用 YAML 格式，是因为 YAML 表达的格式更丰富，可读性更强。
+
+## 初始化配置
+
+### 主函数中增加配置初始化入口
+
+```go
+package main
+
+import (
+    "errors"
+    "log"
+    "net/http"
+    "time"
+
+    "apiserver/config"
+
+     ...
+
+    "github.com/spf13/pflag"
+)
+
+var (
+    cfg = pflag.StringP("config", "c", "", "apiserver config file path.")
+)
+
+func main() {
+    pflag.Parse()
+
+    // init config
+    if err := config.Init(*cfg); err != nil {
+        panic(err)
+    }
+
+    // Create the Gin engine.
+    g := gin.New()
+
+    ...
+}
+```
+
+在 `main` 函数中增加了 `config.Init(*cfg)` 调用，用来初始化配置，cfg 变量值从命令行 flag 传入，可以传值，比如 `./apiserver -c config.yaml`，也可以为空，如果为空会默认读取 `conf/config.yaml`。
+
+### 解析配置
+
+`main` 函数通过 `config.Init` 函数来解析并 `watch` 配置文件（函数路径：`config/config.go`），`config.go` 源码为：
+
+```go
+package config
+
+import (
+    "log"
+    "strings"
+
+    "github.com/fsnotify/fsnotify"
+    "github.com/spf13/viper"
+)
+
+type Config struct {
+    Name string
+}
+
+func Init(cfg string) error {
+    c := Config {
+        Name: cfg,
+    }
+
+    // 初始化配置文件
+    if err := c.initConfig(); err != nil {
+        return err
+    }
+
+    // 监控配置文件变化并热加载程序
+    c.watchConfig()
+
+    return nil
+}
+
+func (c *Config) initConfig() error {
+    if c.Name != "" {
+        viper.SetConfigFile(c.Name) // 如果指定了配置文件，则解析指定的配置文件
+    } else {
+        viper.AddConfigPath("conf") // 如果没有指定配置文件，则解析默认的配置文件
+        viper.SetConfigName("config")
+    }
+    viper.SetConfigType("yaml") // 设置配置文件格式为YAML
+    viper.AutomaticEnv() // 读取匹配的环境变量
+    viper.SetEnvPrefix("APISERVER") // 读取环境变量的前缀为APISERVER
+    replacer := strings.NewReplacer(".", "_") 
+    viper.SetEnvKeyReplacer(replacer)
+    if err := viper.ReadInConfig(); err != nil { // viper解析配置文件
+        return err
+    }
+
+    return nil
+}
+
+// 监控配置文件变化并热加载程序
+func (c *Config) watchConfig() {
+    viper.WatchConfig()
+    viper.OnConfigChange(func(e fsnotify.Event) {
+        log.Printf("Config file changed: %s", e.Name)
+    })
+}
+```
+
+`config.Init()` 通过 `initConfig()` 函数来解析配置文件，通过 `watchConfig()` 函数来 watch 配置文件，两个函数解析如下：
+
+1. `func (c *Config) initConfig() error`
+
+设置并解析配置文件。如果指定了配置文件 `*cfg` 不为空，则解析指定的配置文件，否则解析默认的配置文件 `conf/config.yaml`。通过指定配置文件可以很方便地连接不同的环境（开发环境、测试环境）并加载不同的配置，方便开发和测试。
+
+通过如下设置:
+
+```go
+viper.AutomaticEnv()
+viper.SetEnvPrefix("APISERVER")
+replacer := strings.NewReplacer(".", "_")
+```
+
+可以使程序读取环境变量，具体效果稍后会演示。
+
+`config.Init` 函数中的 `viper.ReadInConfig()` 函数最终会调用 Viper 解析配置文件。
+
+2. `func (c *Config) watchConfig()`
+
+通过该函数的 viper 设置，可以使 viper 监控配置文件变更，如有变更则热更新程序。所谓热更新是指：可以不重启 API 进程，使 API 加载最新配置项的值。
+
+## 配置并读取配置
+
+API 服务器端口号可能经常需要变更，API 服务器启动时间可能会变长，自检程序超时时间需要是可配的（通过设置次数），另外 API 需要根据不同的开发模式（开发、生产、测试）来匹配不同的行为。开发模式也需要是可配置的，这些都可以在配置文件中配置，新建配置文件 `conf/config.yaml`（默认配置文件名字固定为 `config.yaml`），`config.yaml` 的内容为：
+
+```yaml
+runmode: debug               # 开发模式, debug, release, test
+addr: :6663                  # HTTP绑定端口
+name: apiserver              # API Server的名字
+url: http://127.0.0.1:6663   # pingServer函数请求的API服务器的ip:port
+max_ping_count: 10           # pingServer函数尝试的次数
+```
+
+在 main 函数中将相应的配置改成从配置文件读取，需要替换的配置见下图中红框部分。
+
+[](./images/tihuanqian.png)
+
+替换后
+
+[](./images/tihuanhou.png)
+
+另外根据配置文件的 runmode 调用 gin.SetMode 来设置 gin 的运行模式：
+
+```go
+func main() { 
+    pflag.Parse()
+
+    // init config
+    if err := config.Init(*cfg); err != nil {
+        panic(err)
+    }
+
+    // Set gin mode.
+    gin.SetMode(viper.GetString("runmode"))
+
+    ....
+
+}
+```
+
+gin 有 3 种运行模式：debug、release 和 test，其中 debug 模式会打印很多 debug 信息。
+
+## 编译并运行
+
+修改 `conf/config.yaml` 将端口修改为 `8888`，并启动 apiserver
+
+修改后配置文件为：
+
+```yaml
+runmode: debug               # 开发模式, debug, release, test
+addr: :8888                  # HTTP绑定端口
+name: apiserver              # API Server的名字
+url: http://127.0.0.1:8888   # pingServer函数请求的API服务器的ip:port
+max_ping_count: 10           # pingServer函数try的次数
+```
+
+修改后启动 apiserver：
+
+[](./images/qidong.png)
+
+可以看到，启动 apiserver 后端口为配置文件中指定的端口。
+
+## Viper 高级用法
+
+### 从环境变量读取配置
+
+在本节第一部分介绍过，Viper 可以从环境变量读取配置，这是个非常有用的功能。现在越来越多的程序是运行在 Kubernetes 容器集群中的，在 API 服务器迁移到容器集群时，可以直接通过 Kubernetes 来设置环境变量，然后程序读取设置的环境变量来配置 API 服务器。读者不需要了解如何通过 Kubernetes 设置环境变量，只需要知道 Viper 可以直接读取环境变量即可。
+
+例如，通过环境变量来设置 API Server 端口：
+
+```
+$ export APISERVER_ADDR=:7777
+$ export APISERVER_URL=http://127.0.0.1:7777
+$ ./apiserver 
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] GET    /sd/health                --> apiserver/handler/sd.HealthCheck (5 handlers)
+[GIN-debug] GET    /sd/disk                  --> apiserver/handler/sd.DiskCheck (5 handlers)
+[GIN-debug] GET    /sd/cpu                   --> apiserver/handler/sd.CPUCheck (5 handlers)
+[GIN-debug] GET    /sd/ram                   --> apiserver/handler/sd.RAMCheck (5 handlers)
+Start to listening the incoming requests on http address: :7777
+The router has been deployed successfully.
+```
+
+从输出可以看到，设置 `APISERVER_ADDR=:7777` 和 `APISERVER_URL=http://127.0.0.1:7777` 后，启动 apiserver，API 服务器的端口变为 `7777`。
+
+环境变量名格式为 `config/config.go` 文件中 `viper.SetEnvPrefix("APISERVER")` 所设置的前缀和配置名称大写，二者用 `_` 连接，比如 `APISERVER_RUNMODE`。如果配置项是嵌套的，情况可类推，比如
+
+```yaml
+....
+max_ping_count: 10           # pingServer函数try的次数
+db:
+  name: db_apiserver
+```
+
+对应的环境变量名为 `APISERVER_DB_NAME`。
+
+### 热更新
+
+在 `main` 函数中添加如下测试代码（`for {}` 部分，循环打印 `runmode` 的值）：
+
+```go
+import (
+    "fmt"
+    ....
+)
+
+var (
+    cfg = pflag.StringP("config", "c", "", "apiserver config file path.")
+)
+
+func main() {
+    pflag.Parse()
+
+    // init config
+    if err := config.Init(*cfg); err != nil {
+        panic(err)
+    }
+
+    for {
+        fmt.Println(viper.GetString("runmode"))
+        time.Sleep(4*time.Second)
+    }
+    ....
+}
+```
+
+编译并启动 `apiserver` 后，修改配置文件中 `runmode` 为 `test`，可以看到 `runmode` 的值从 `debug` 变为 `test`：
+
+[](./images/peizhi.png)
+
+# 6, 记录和管理 API 日志
+
+## 本节核心内容
+
+- Go 日志包数量众多，功能不同、性能不同，我们介绍一个比较好的日志库，并给出原因
+- 介绍如何初始化日志包
+- 介绍如何调用日志包
+- 介绍如何转存（rotate）日志文件
+
+>本节源码为 `demo3`
+
+## 日志包介绍
+
+apiserver 所采用的日志包 lexkong/log 是调研 GitHub 上的 开源log 包后封装的一个日志包。它参考华为 paas-lager，做了一些便捷性的改动，功能完全一样，只不过更为便捷。相较于 Go 的其他日志包，该日志包有如下特点：
+
+- 支持日志输出流配置，可以输出到 stdout 或 file，也可以同时输出到 stdout 和 file
+- 支持输出为 JSON 或 plaintext 格式
+- 支持彩色输出
+- 支持 log rotate 功能
+- 高性能
+
+## 初始化日志包
+
+在 `conf/config.yaml` 中添加 log 配置
+
+[](./images/初始化日志.png)
+
+在 `config/config.go` 中添加日志初始化代码
+
+```go
+package config
+
+import (
+    ....
+    "github.com/lexkong/log"
+    ....
+)
+....
+func Init(cfg string) error {
+    ....
+    // 初始化配置文件
+    if err := c.initConfig(); err != nil {
+        return err
+    }
+
+    // 初始化日志包
+    c.initLog()
+    ....
+}
+
+func (c *Config) initConfig() error {
+    ....
+}
+
+func (c *Config) initLog() {
+    passLagerCfg := log.PassLagerCfg {
+        Writers:        viper.GetString("log.writers"),
+        LoggerLevel:    viper.GetString("log.logger_level"),
+        LoggerFile:     viper.GetString("log.logger_file"),
+        LogFormatText:  viper.GetBool("log.log_format_text"),
+        RollingPolicy:  viper.GetString("log.rollingPolicy"),
+        LogRotateDate:  viper.GetInt("log.log_rotate_date"),
+        LogRotateSize:  viper.GetInt("log.log_rotate_size"),
+        LogBackupCount: viper.GetInt("log.log_backup_count"),
+    }
+
+    log.InitWithConfig(&passLagerCfg)
+}  
+
+// 监控配置文件变化并热加载程序
+func (c *Config) watchConfig() {
+    ....
+}
+```
+
+这里要注意，日志初始化函数 `c.initLog()` 要放在配置初始化函数 `c.initConfig()` 之后，因为日志初始化函数要读取日志相关的配置。`func (c *Config) initLog()` 是日志初始化函数，会设置日志包的各项参数，参数为：
+
+- `writers`：输出位置，有两个可选项 —— file 和 stdout。选择 file 会将日志记录到 logger_file 指定的日志文件中，选择 stdout 会将日志输出到标准输出，当然也可以两者同时选择
+- `logger_level`：日志级别，DEBUG、INFO、WARN、ERROR、FATAL
+- `logger_file`：日志文件
+- `log_format_text`：日志的输出格式，JSON 或者 plaintext，true 会输出成非 JSON 格式，false 会输出成 JSON 格式
+- `rollingPolicy`：rotate 依据，可选的有 daily 和 size。如果选 daily 则根据天进行转存，如果是 size 则根据大小进行转存
+- `log_rotate_date`：rotate 转存时间，配 合rollingPolicy: daily 使用
+- `log_rotate_size`：rotate 转存大小，配合 rollingPolicy: size 使用
+- `log_backup_count`：当日志文件达到转存标准时，log 系统会将该日志文件进行压缩备份，这里指定了备份文件的最大个数
+
+## 调用日志包
+
+日志初始化好了，将 demo02 中的 log 用 lexkong/log 包来替换。替换前（这里 grep 出了需要替换的行，可自行确认替换后的效果）：
+
+```go
+$ grep log * -R
+config/config.go:	"log"
+config/config.go:		log.Printf("Config file changed: %s", e.Name)
+main.go:	"log"
+main.go:			log.Fatal("The router has no response, or it might took too long to start up.", err)
+main.go:		log.Print("The router has been deployed successfully.")
+main.go:	log.Printf("Start to listening the incoming requests on http address: %s", viper.GetString("addr"))
+main.go:	log.Printf(http.ListenAndServe(viper.GetString("addr"), g).Error())
+main.go:		log.Print("Waiting for the router, retry in 1 second.")
+```
+
+替换后的源码文件见 demo03。
+
+## 编译并运行
+
+启动后，可以看到 apiserver 有 JSON 格式的日志输出：
+
+[](./images/json格式日志.png)
+
+## 管理日志文件
+
+这里将日志转存策略设置为 size，转存大小设置为 1 MB
+
+```yaml
+  rollingPolicy: size
+  log_rotate_size: 1
+```
+
+并在 main 函数中加入测试代码：
+
+[](./images/日志测试代码.png)
+
+启动 apiserver 后发现，在当前目录下创建了 log/apiserver.log 日志文件：
+
+```
+$ ls log/
+apiserver.log
+```
+
+程序运行一段时间后，发现又创建了 zip 文件：
+
+```
+$ ls log/
+apiserver.log  apiserver.log.20180531134509631.zip
+```
+
+该 zip 文件就是当 apiserver.log 大小超过 1MB 后，日志系统将之前的日志压缩成 zip 文件后的文件。
