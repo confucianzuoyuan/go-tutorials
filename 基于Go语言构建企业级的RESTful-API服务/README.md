@@ -1317,3 +1317,529 @@ $ curl -XPOST -H "Content-Type: application/json" http://127.0.0.1:8080/v1/user 
 如果 err = nil，则 errno.DecodeErr(err) 会返回成功的 code: 0 和 message: OK。
 
 >如果 API 是对外的，错误信息数量有限，则制定错误码非常容易，强烈建议使用错误码。如果是内部系统，特别是庞大的系统，内部错误会非常多，这时候没必要为每一个错误制定错误码，而只需为常见的错误制定错误码，对于普通的错误，系统在处理时会统一作为 InternalServerError 处理。
+
+# 10, 读取和返回 HTTP 请求
+
+## 本节核心内容
+
+- 如何读取 HTTP 请求数据
+- 如何返回数据
+- 如何定制业务的返回格式
+
+本小节源码下载路径：demo06
+
+## 读取和返回参数
+
+在业务开发过程中，需要读取请求参数（消息体和 HTTP Header），经过业务处理后返回指定格式的消息。apiserver 也展示了如何进行参数的读取和返回，下面展示了如何读取和返回参数：
+
+读取 HTTP 信息： 在 API 开发中需要读取的参数通常为：HTTP Header、路径参数、URL参数、消息体，读取这些参数可以直接使用 gin 框架自带的函数：
+
+- Param()：返回 URL 的参数值，例如
+
+```go
+router.GET("/user/:id", func(c *gin.Context) {
+    // a GET request to /user/john
+    id := c.Param("id") // id == "john"
+})
+```
+
+- Query()：读取 URL 中的地址参数，例如
+
+```go
+// GET /path?id=1234&name=Manu&value=
+   c.Query("id") == "1234"
+   c.Query("name") == "Manu"
+   c.Query("value") == ""
+   c.Query("wtf") == ""
+```
+
+- DefaultQuery()：类似 Query()，但是如果 key 不存在，会返回默认值，例如
+
+```go
+//GET /?name=Manu&lastname=
+c.DefaultQuery("name", "unknown") == "Manu"
+c.DefaultQuery("id", "none") == "none"
+c.DefaultQuery("lastname", "none") == ""
+```
+
+- Bind()：检查 Content-Type 类型，将消息体作为指定的格式解析到 Go struct 变量中。apiserver 采用的媒体类型是 JSON，所以 Bind() 是按 JSON 格式解析的。
+
+- GetHeader()：获取 HTTP 头。
+
+返回HTTP消息： 因为要返回指定的格式，apiserver 封装了自己的返回函数，通过统一的返回函数 SendResponse 来格式化返回，小节后续部分有详细介绍。
+
+## 增加返回函数
+
+API 返回入口函数，供所有的服务模块返回时调用，所以这里将入口函数添加在 handler 目录下，handler/handler.go 的源码为：
+
+```go
+package handler
+
+import (
+	"net/http"
+
+	"apiserver/pkg/errno"
+
+	"github.com/gin-gonic/gin"
+)
+
+type Response struct {
+	Code    int         `json:"code"`
+	Message string      `json:"message"`
+	Data    interface{} `json:"data"`
+}
+
+func SendResponse(c *gin.Context, err error, data interface{}) {
+	code, message := errno.DecodeErr(err)
+
+	// always return http.StatusOK
+	c.JSON(http.StatusOK, Response{
+		Code:    code,
+		Message: message,
+		Data:    data,
+	})
+}
+```
+
+可以看到返回格式固定为：
+
+```go
+type Response struct {
+	Code    int         `json:"code"`
+	Message string      `json:"message"`
+	Data    interface{} `json:"data"`
+}
+```
+
+在返回结构体中，固定有 Code 和 Message 参数，这两个参数通过函数 DecodeErr() 解析 error 类型的变量而来（DecodeErr() 在上一节介绍过）。Data 域为 interface{} 类型，可以根据业务自己的需求来返回，可以是 map、int、string、struct、array 等 Go 语言变量类型。SendResponse() 函数通过 errno.DecodeErr(err) 来解析出 code 和 message，并填充在 Response 结构体中。
+
+## 在业务处理函数中读取和返回数据
+
+通过改写上一节 handler/user/create.go 源文件中的 Create() 函数，来演示如何读取和返回数据，改写后的源码为：
+
+```go
+package user
+
+import (
+	"fmt"
+
+	. "apiserver/handler"
+	"apiserver/pkg/errno"
+
+	"github.com/gin-gonic/gin"
+	"github.com/lexkong/log"
+)
+
+// Create creates a new user account.
+func Create(c *gin.Context) {
+	var r CreateRequest
+	if err := c.Bind(&r); err != nil {
+		SendResponse(c, errno.ErrBind, nil)
+		return
+	}
+
+	admin2 := c.Param("username")
+	log.Infof("URL username: %s", admin2)
+
+	desc := c.Query("desc")
+	log.Infof("URL key param desc: %s", desc)
+
+	contentType := c.GetHeader("Content-Type")
+	log.Infof("Header Content-Type: %s", contentType)
+
+	log.Debugf("username is: [%s], password is [%s]", r.Username, r.Password)
+	if r.Username == "" {
+		SendResponse(c, errno.New(errno.ErrUserNotFound, fmt.Errorf("username can not found in db: xx.xx.xx.xx")), nil)
+		return
+	}
+
+	if r.Password == "" {
+		SendResponse(c, fmt.Errorf("password is empty"), nil)
+	}
+
+	rsp := CreateResponse{
+		Username: r.Username,
+	}
+
+	// Show the user information.
+	SendResponse(c, nil, rsp)
+}
+```
+
+这里也需要更新下路由，router/router.go（详见 demo06/router/router.go）：
+
+[](./images/更新路由.png)
+
+上例展示了如何通过 Bind()、Param()、Query() 和 GetHeader() 来获取相应的参数。
+
+根据笔者的研发经验，建议：如果消息体有 JSON 参数需要传递，针对每一个 API 接口定义独立的 go struct 来接收，比如 CreateRequest 和 CreateResponse，并将这些结构体统一放在一个 Go 文件中，以方便后期维护和修改。这样做可以使代码结构更加规整和清晰，本例统一放在 handler/user/user.go 中，源码为：
+
+```go
+package user
+
+type CreateRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type CreateResponse struct {
+	Username string `json:"username"`
+}
+```
+
+## 编译并运行
+
+## 测试
+
+启动apiserver：./apiserver，发送 HTTP 请求：
+
+```sh
+$ curl -XPOST -H "Content-Type: application/json" http://127.0.0.1:8080/v1/user/admin2?desc=test -d'{"username":"admin","password":"admin"}'
+
+{
+  "code": 0,
+  "message": "OK",
+  "data": {
+    "username": "admin"
+  }
+}
+```
+
+查看 apiserver 日志：
+
+[](./images/api日志.png)
+
+可以看到成功读取了请求中的各类参数。并且 curl 命令返回的结果格式为指定的格式：
+
+```json
+{
+  "code": 0,
+  "message": "OK",
+  "data": {
+    "username": "admin"
+  }
+}
+```
+
+# 11, 用户业务逻辑处理
+
+## 本节核心内容
+
+这一节是核心小节，讲解如何处理用户业务，这也是 API 的核心功能。本小节会讲解实际开发中需要的一些重要功能点。功能点包括：
+
+- 各种场景的业务逻辑处理
+    - 创建用户
+    - 删除用户
+    - 更新用户
+    - 查询用户列表
+    - 查询指定用户的信息
+- 数据库的 CURD 操作
+
+>本小节源码下载路径：demo07
+
+## 配置路由信息
+
+需要先在 router/router.go 文件中，配置路由信息：
+
+```go
+func Load(g *gin.Engine, mw ...gin.HandlerFunc) *gin.Engine {
+    ...
+	// 用户路由设置
+	u := g.Group("/v1/user")
+	{
+		u.POST("", user.Create)         // 创建用户
+		u.DELETE("/:id", user.Delete)   // 删除用户 
+		u.PUT("/:id", user.Update)      // 更新用户
+		u.GET("", user.List)            // 用户列表
+		u.GET("/:username", user.Get)   // 获取指定用户的详细信息
+	}
+    ...
+	return g
+}
+```
+
+>在 RESTful API 开发中，API 经常会变动，为了兼容老的 API，引入了版本的概念，比如上例中的 /v1/user，说明该 API 版本是 v1。
+>
+>很多 RESTful API 最佳实践文章中均建议使用版本控制，笔者这里也建议对 API 使用版本控制。
+
+## 注册新的错误码
+
+在 pkg/errno/code.go 文件中（详见 demo07/pkg/errno/code.go），新增如下错误码：
+
+```go
+var (
+	// Common errors
+        ...
+
+	ErrValidation       = &Errno{Code: 20001, Message: "Validation failed."}
+	ErrDatabase         = &Errno{Code: 20002, Message: "Database error."}
+	ErrToken            = &Errno{Code: 20003, Message: "Error occurred while signing the JSON web token."}
+
+	// user errors
+	ErrEncrypt           = &Errno{Code: 20101, Message: "Error occurred while encrypting the user password."}
+	ErrTokenInvalid      = &Errno{Code: 20103, Message: "The token was invalid."}
+	ErrPasswordIncorrect = &Errno{Code: 20104, Message: "The password was incorrect."}
+)
+```
+
+## 新增用户
+
+更新 handler/user/create.go 中 Create() 的逻辑，更新后的内容见 demo07/handler/user/create.go。
+
+创建用户逻辑：
+
+- 从 HTTP 消息体获取参数（用户名和密码）
+- 参数校验
+- 加密密码
+- 在数据库中添加数据记录
+- 返回结果（这里是用户名）
+
+从 HTTP 消息体解析参数，前面小节已经介绍了。
+
+参数校验这里用的是 gopkg.in/go-playground/validator.v9 包（详见 go-playground/validator），实际开发过程中，该包可能不能满足校验需求，这时候可在程序中加入自己的校验逻辑，比如在 handler/user/creater.go 中添加校验函数 checkParam：
+
+```go
+package user
+
+import (
+    ...
+)
+
+// Create creates a new user account.
+func Create(c *gin.Context) {
+	log.Info("User Create function called.", lager.Data{"X-Request-Id": util.GetReqID(c)})
+	var r CreateRequest
+	if err := c.Bind(&r); err != nil {
+		SendResponse(c, errno.ErrBind, nil)
+		return
+	}
+
+	if err := r.checkParam(); err != nil {
+		SendResponse(c, err, nil)
+		return
+	}
+        ...
+}
+
+func (r *CreateRequest) checkParam() error {
+	if r.Username == "" {
+		return errno.New(errno.ErrValidation, nil).Add("username is empty.")
+	}
+
+	if r.Password == "" {
+		return errno.New(errno.ErrValidation, nil).Add("password is empty.")
+	}
+
+	return nil
+}
+```
+
+例子通过 Encrypt() 对密码进行加密：
+
+```go
+// Encrypt the user password.
+func (u *UserModel) Encrypt() (err error) {
+    u.Password, err = auth.Encrypt(u.Password)
+    return
+}
+```
+
+Encrypt() 函数引用 auth.Encrypt() 来进行密码加密，具体实现见 demo07/pkg/auth/auth.go。
+
+最后例子通过 u.Create() 函数来向数据库中添加记录，ORM 用的是 gorm，gorm 详细用法请参考 GORM 指南。在 Create() 函数中引用的数据库实例是 DB.Self，该实例在 API 启动之前已经完成初始化。DB 是个全局变量，可以直接引用。
+
+>在实际开发中，为了安全，数据库中是禁止保存密码的明文信息的，密码需要加密保存。
+>
+>我们将接收和处理相关的 Go 结构体统一放在 handler/user/user.go 文件中，这样可以使程序结构更清晰，功能更聚焦。当然每个人习惯不一样，大家根据自己的习惯放置即可。handler/user/user.go 对 UserInfo 结构体的处理，也出于相同的目的。
+
+## 删除用户
+
+删除用户代码详见 demo07/handler/user/delete.go。
+
+删除时，首先根据 URL 路径 DELETE http://127.0.0.1/v1/user/1 解析出 id 的值 1，该 id 实际上就是数据库中的 id 索引，调用 model.DeleteUser() 函数删除，函数详见 demo07/model/user.go。
+
+## 更新用户
+
+更新用户代码详见 demo07/handler/user/update.go。
+
+更新用户逻辑跟创建用户差不多，在更新完数据库字段后，需要指定 gorm model 中的 id 字段的值，因为 gorm 在更新时默认是按照 id 来匹配记录的。通过解析 PUT http://127.0.0.1/v1/user/1 来获取 id。
+
+## 查询用户列表
+
+查询用户列表代码详见 demo07/handler/user/list.go。
+
+一般在 handler 中主要做解析参数、返回数据操作，简单的逻辑也可以在 handler 中做，像新增用户、删除用户、更新用户，代码量不大，所以也可以放在 handler 中。有些代码量很大的逻辑就不适合放在 handler 中，因为这样会导致 handler 逻辑不是很清晰，这时候实际处理的部分通常放在 service 包中。比如本例的 LisUser() 函数：
+
+```go
+package user
+   
+import (
+    "apiserver/service"
+    ...
+)  
+   
+// List list the users in the database.
+func List(c *gin.Context) {
+    ...
+    infos, count, err := service.ListUser(r.Username, r.Offset, r.Limit)
+    if err != nil {
+        SendResponse(c, err, nil)
+        return
+    }
+    ...
+}
+```
+
+查询一个 REST 资源列表，通常需要做分页，如果不做分页返回的列表过多，会导致 API 响应很慢，前端体验也不好。本例中的查询函数做了分页，收到的请求中传入的 offset 和 limit 参数，分别对应于 MySQL 的 offset 和 limit。
+
+service.ListUser() 函数用来做具体的查询处理，代码详见 demo07/service/service.go。
+
+在 ListUser() 函数中用了 sync 包来做并行查询，以使响应延时更小。在实际开发中，查询数据后，通常需要对数据做一些处理，比如 ListUser() 函数中会对每个用户记录返回一个 sayHello 字段。sayHello 只是简单输出了一个 Hello shortId 字符串，其中 shortId 是通过 util.GenShortId() 来生成的（GenShortId 实现详见 demo07/util/util.go）。像这类操作通常会增加 API 的响应延时，如果列表条目过多，列表中的每个记录都要做一些类似的逻辑处理，这会使得整个 API 延时很高，所以笔者在实际开发中通常会做并行处理。根据笔者经验，效果提升十分明显。
+
+读者应该已经注意到了，在 ListUser() 实现中，有 sync.Mutex 和 IdMap 等部分代码，使用 sync.Mutex 是因为在并发处理中，更新同一个变量为了保证数据一致性，通常需要做锁处理。
+
+使用 IdMap 是因为查询的列表通常需要按时间顺序进行排序，一般数据库查询后的列表已经排过序了，但是为了减少延时，程序中用了并发，这时候会打乱排序，所以通过 IdMap 来记录并发处理前的顺序，处理后再重新复位。
+
+## 获取指定用户的详细信息
+
+代码详见 demo07/handler/user/get.go。
+
+获取指定用户信息时，首先根据 URL 路径 GET http://127.0.0.1/v1/user/admin 解析出 username 的值 admin，然后调用 model.GetUser() 函数查询该用户的数据库记录并返回，函数详见 demo07/model/user.go。
+
+## 编译并运行
+
+### 创建用户
+
+```sh
+$ curl -XPOST -H "Content-Type: application/json" http://127.0.0.1:8080/v1/user -d'{"username":"kong","password":"kong123"}'
+
+{
+  "code": 0,
+  "message": "OK",
+  "data": {
+    "username": "kong"
+  }
+}
+```
+
+### 查询用户列表
+
+```sh
+$ curl -XGET -H "Content-Type: application/json" http://127.0.0.1:8080/v1/user -d'{"offset": 0, "limit": 20}'
+
+{
+  "code": 0,
+  "message": "OK",
+  "data": {
+    "totalCount": 2,
+    "userList": [
+      {
+        "id": 2,
+        "username": "kong",
+        "sayHello": "Hello qhXO5iIig",
+        "password": "$2a$10$vE9jG71oyzstWVwB/QfU3u00Pxb.ye8hFIDvnyw60nHBv/xsJZoUO",
+        "createdAt": "2018-06-02 14:47:54",
+        "updatedAt": "2018-06-02 14:47:54"
+      },
+      {
+        "id": 0,
+        "username": "admin",
+        "sayHello": "Hello qhXO5iSmgz",
+        "password": "$2a$10$veGcArz47VGj7l9xN7g2iuT9TF21jLI1YGXarGzvARNdnt4inC9PG",
+        "createdAt": "2018-05-28 00:25:33",
+        "updatedAt": "2018-05-28 00:25:33"
+      }
+    ]
+  }
+}
+```
+
+可以看到，新增了一个用户 kong，数据库 id 索引为 2。admin 用户是上一节中初始化数据库时初始化的。
+
+>建议在 API 设计时，对资源列表进行分页。
+
+### 获取用户详细信息
+
+```sh
+$ curl -XGET -H "Content-Type: application/json" http://127.0.0.1:8080/v1/user/kong
+
+{
+  "code": 0,
+  "message": "OK",
+  "data": {
+    "username": "kong",
+    "password": "$2a$10$vE9jG71oyzstWVwB/QfU3u00Pxb.ye8hFIDvnyw60nHBv/xsJZoUO"
+  }
+}
+```
+
+### 更新用户
+
+在 查询用户列表 部分，会返回用户的数据库索引。例如，用户 kong 的数据库 id 索引是 2，所以这里调用如下 URL 更新 kong 用户：
+
+```sh
+$ curl -XPUT -H "Content-Type: application/json" http://127.0.0.1:8080/v1/user/2 -d'{"username":"kong","password":"kongmodify"}'
+
+{
+  "code": 0,
+  "message": "OK",
+  "data": null
+}
+```
+
+获取 kong 用户信息：
+
+```sh
+$ curl -XGET -H "Content-Type: application/json" http://127.0.0.1:8080/v1/user/kong
+
+{
+  "code": 0,
+  "message": "OK",
+  "data": {
+    "username": "kong",
+    "password": "$2a$10$E0kwtmtLZbwW/bDQ8qI8e.eHPqhQOW9tvjwpyo/p05f/f4Qvr3OmS"
+  }
+}
+```
+
+可以看到密码已经改变（旧密码为 $2a$10$vE9jG71oyzstWVwB/QfU3u00Pxb.ye8hFIDvnyw60nHBv/xsJZoUO）。
+
+### 删除用户
+
+在 查询用户列表 部分，会返回用户的数据库索引。例如，用户 kong 的数据库 id 索引是 2，所以这里调用如下 URL 删除 kong 用户：
+
+```sh
+$ curl -XDELETE -H "Content-Type: application/json" http://127.0.0.1:8080/v1/user/2
+
+{
+  "code": 0,
+  "message": "OK",
+  "data": null
+}
+```
+
+获取用户列表：
+
+```sh
+$ curl -XGET -H "Content-Type: application/json" http://127.0.0.1:8080/v1/user -d'{"offset": 0, "limit": 20}'
+
+{
+  "code": 0,
+  "message": "OK",
+  "data": {
+    "totalCount": 1,
+    "userList": [
+      {
+        "id": 0,
+        "username": "admin",
+        "sayHello": "Hello EnqntiSig",
+        "password": "$2a$10$veGcArz47VGj7l9xN7g2iuT9TF21jLI1YGXarGzvARNdnt4inC9PG",
+        "createdAt": "2018-05-28 00:25:33",
+        "updatedAt": "2018-05-28 00:25:33"
+      }
+    ]
+  }
+}
+```
+
+可以看到用户 kong 未出现在用户列表中，说明他已被成功删除。
