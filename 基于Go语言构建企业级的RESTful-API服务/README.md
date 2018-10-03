@@ -4,7 +4,7 @@
 
 本教程通过实现一个账号系统，来演示如何构建一个真实的 API 服务器。通过实战展示了 API 构建过程中各个流程（准备 -> 设计 -> 开发 -> 测试 -> 部署）的实现方法，内容如下：
 
-[](./images/neirong.png)
+![](./images/内容.png)
 
 详细为：
 
@@ -83,7 +83,7 @@ REST 风格虽然适用于很多传输协议，但在实际开发中，REST 由�
 
 RPC 的调用过程如下：
 
-[](./images/rpc.png)
+![](./images/rpc.png)
 
 - 1, Client 通过本地调用，调用 Client Stub
 - 2, Client Stub 将参数打包（也叫 Marshalling）成一个消息，然后发送这个消息
@@ -128,7 +128,7 @@ RPC 的调用过程如下：
 
 ## HTTP API 服务器启动流程
 
-[](./images/httpstart.png)
+![](./images/httpstart.png)
 
 如上图，在启动一个 API 命令后，API 命令会首先加载配置文件，根据配置做后面的处理工作。通常会将日志相关的配置记录在配置文件中，在解析完配置文件后，就可以加载日志包初始化函数，来初始化日志实例，供后面的程序调用。接下来会初始化数据库实例，建立数据库连接，供后面对数据库的 CRUD 操作使用。在建立完数据库连接后，需要设置 HTTP，通常包括 3 方面的设置：
 
@@ -144,7 +144,7 @@ RPC 的调用过程如下：
 
 ## HTTP 请求处理流程
 
-[](./images/httphandle.png)
+![](./images/httphandle.png)
 
 一次完整的 HTTP 请求处理流程如上图所示。
 
@@ -171,7 +171,7 @@ HTTP 服务器软件进程，这里指的是 API 服务器，在接收到请求�
 
 一个 HTTP 请求报文由请求行（request line）、请求头部（header）、空行和请求数据四部分组成，下图是请求报文的一般格式。
 
-[](./images/httpformat.png)
+![](./images/httpformat.png)
 
 - 第一行必须是一个请求行（request line），用来说明请求类型、要访问的资源以及所使用的 HTTP 版本
 - 紧接着是一个头部（header）小节，用来说明服务器要使用的附加信息
@@ -380,7 +380,7 @@ func pingServer() error {
 
 在 `pingServer()` 函数中，`http.Get` 向 `http://127.0.0.1:8080/sd/health` 发送 HTTP GET 请求，如果函数正确执行并且返回的 HTTP StatusCode 为 200，则说明 API 服务器可用，`pingServer` 函数输出部署成功提示；如果超过指定次数，`pingServer` 直接终止 API Server 进程，如下图所示。
 
-[](./images/terminal.png)
+![](./images/terminal.png)
 
 >`/sd/health` 路径会匹配到 `handler/sd/check.go` 中的 `HealthCheck` 函数，该函数只返回一个字符串：OK。
 
@@ -638,11 +638,11 @@ max_ping_count: 10           # pingServer函数尝试的次数
 
 在 main 函数中将相应的配置改成从配置文件读取，需要替换的配置见下图中红框部分。
 
-[](./images/tihuanqian.png)
+![](./images/tihuanqian.png)
 
 替换后
 
-[](./images/tihuanhou.png)
+![](./images/tihuanhou.png)
 
 另外根据配置文件的 runmode 调用 gin.SetMode 来设置 gin 的运行模式：
 
@@ -681,7 +681,7 @@ max_ping_count: 10           # pingServer函数try的次数
 
 修改后启动 apiserver：
 
-[](./images/qidong.png)
+![](./images/qidong.png)
 
 可以看到，启动 apiserver 后端口为配置文件中指定的端口。
 
@@ -754,7 +754,7 @@ func main() {
 
 编译并启动 `apiserver` 后，修改配置文件中 `runmode` 为 `test`，可以看到 `runmode` 的值从 `debug` 变为 `test`：
 
-[](./images/peizhi.png)
+![](./images/peizhi.png)
 
 # 6, 记录和管理 API 日志
 
@@ -781,7 +781,7 @@ apiserver 所采用的日志包 lexkong/log 是调研 GitHub 上的 开源log �
 
 在 `conf/config.yaml` 中添加 log 配置
 
-[](./images/初始化日志.png)
+![](./images/初始化日志.png)
 
 在 `config/config.go` 中添加日志初始化代码
 
@@ -877,7 +877,7 @@ main.go:		log.Print("Waiting for the router, retry in 1 second.")
 
 并在 main 函数中加入测试代码：
 
-[](./images/日志测试代码.png)
+![](./images/日志测试代码.png)
 
 启动 apiserver 后发现，在当前目录下创建了 log/apiserver.log 日志文件：
 
@@ -989,7 +989,7 @@ deletedAt: NULL
 
 API 启动需要连接数据库，所以需要在配置文件 conf/config.yaml 中配置数据库的 IP、端口、用户名、密码和数据库名信息。
 
-[](./images/数据库配置.png)
+![](./images/数据库配置.png)
 
 # 8, 初始化 MySQL 数据库并建立连接
 
@@ -1248,7 +1248,7 @@ errno.go 同时也提供了 Add() 和 Addf() 函数，如果想对外展示更�
 
 1. router/router.go 中添加路由，详见 demo05/router/router.go：
 
-[](./images/添加路由.png)
+![](./images/添加路由.png)
 
 2. handler 目录下增加业务处理函数 handler/user/create.go，详见 demo05/handler/user/create.go。
 
@@ -1301,7 +1301,7 @@ $ curl -XPOST -H "Content-Type: application/json" http://127.0.0.1:8080/v1/user 
 
 演示了如何通过定制错误方便地对比是不是某个错误，在该请求中，apiserver 会输出如下错误：
 
-[](./images/输出错误.png)
+![](./images/输出错误.png)
 
 可以看到在后台日志中会输出敏感信息 username can not found in db: xx.xx.xx.xx，但是返回给用户的 message （{"code":20102,"message":"The user was not found. This is add message."}）不包含这些敏感信息，可以供前端直接对外展示。
 
@@ -1468,7 +1468,7 @@ func Create(c *gin.Context) {
 
 这里也需要更新下路由，router/router.go（详见 demo06/router/router.go）：
 
-[](./images/更新路由.png)
+![](./images/更新路由.png)
 
 上例展示了如何通过 Bind()、Param()、Query() 和 GetHeader() 来获取相应的参数。
 
@@ -1507,7 +1507,7 @@ $ curl -XPOST -H "Content-Type: application/json" http://127.0.0.1:8080/v1/user/
 
 查看 apiserver 日志：
 
-[](./images/api日志.png)
+![](./images/api日志.png)
 
 可以看到成功读取了请求中的各类参数。并且 curl 命令返回的结果格式为指定的格式：
 
@@ -1857,7 +1857,7 @@ $ curl -XGET -H "Content-Type: application/json" http://127.0.0.1:8080/v1/user -
 
 在实际开发中，我们可能需要对每个请求/返回做一些特定的操作，比如记录请求的 log 信息，在返回中插入一个 Header，对部分接口进行鉴权，这些都需要一个统一的入口，逻辑如下：
 
-[](./images/接口逻辑.png)
+![](./images/接口逻辑.png)
 
 这个功能可以通过引入 middleware 中间件来解决。Go 的 net/http 设计的一大特点是特别容易构建中间件。apiserver 所使用的 gin 框架也提供了类似的中间件。
 
@@ -1880,7 +1880,7 @@ g.Use(middleware.AuthMiddleware())
 
 这里通过一个例子来说明这 3 种中间件。
 
-[](./images/中间件.png)
+![](./images/中间件.png)
 
 - 全局中间件：注册中间件的过程之前设置的路由，将不会受注册的中间件所影响。只有注册了中间件之后代码的路由函数规则，才会被中间件装饰。
 - 单个路由中间件：需要在注册路由时注册中间件 r.GET("/benchmark", MyBenchLogger(), benchEndpoint)
@@ -1992,7 +1992,7 @@ c.Request.Body = ioutil.NopCloser(bytes.NewBuffer(bodyBytes))
 
 发送 HTTP 请求 —— 查询用户列表：
 
-[](./images/发送请求.png)
+![](./images/发送请求.png)
 
 可以看到，HTTP 返回的 Header 有 32 位的 UUID：X-Request-Id: 1f8b1ae2-8009-4921-b354-86f25022dfa0。
 
@@ -2000,7 +2000,7 @@ c.Request.Body = ioutil.NopCloser(bytes.NewBuffer(bodyBytes))
 
 在 API 日志中，可以看到有 HTTP 请求记录：
 
-[](./images/请求记录.png)
+![](./images/请求记录.png)
 
 日志记录了 HTTP 请求的如下信息，依次为：
 
@@ -2028,7 +2028,7 @@ c.Request.Body = ioutil.NopCloser(bytes.NewBuffer(bodyBytes))
 
 ### JWT 认证流程
 
-[](./images/jwt.png)
+![](./images/jwt.png)
 
 1. 客户端使用用户名和密码请求登录
 2. 服务端收到请求后会去验证用户名和密码，如果用户名和密码跟数据库记录不一致则验证失败，如果一致则验证通过，服务端会签发一个 Token 返回给客户端
@@ -2097,7 +2097,7 @@ Signature 是 Token 的签名部分，通过如下方式生成：
 
 Secret 相当于一个密码，存储在服务端，一般通过配置文件来配置 Secret 的值，本例中是配置在 conf/config.yaml 配置文件中:
 
-[](./images/secrect)
+![](./images/secrect)
 
 最后生成的 Token 像这样：
 
@@ -2139,7 +2139,7 @@ g.POST("/login", user.Login)
 
 在 router/router.go 中对 user handler 添加授权 middleware：
 
-[](./images/认证中间件.png)
+![](./images/认证中间件.png)
 
 通过该 middleware，所有对 /v1/user 路径的请求，都会经过 middleware.AuthMiddleware() 中间件的处理：token 校验。middleware.AuthMiddleware() 函数是通过调用 token.ParseRequest() 来进行 token 校验的。
 
@@ -2226,7 +2226,7 @@ HTTPS 在传输数据之前需要客户端（浏览器）与服务端（网站�
 
 下图是 HTTPS 的通信过程：
 
-[](./images/https.png)
+![](./images/https.png)
 
 流程大概是这样的：
 
@@ -2271,11 +2271,11 @@ config.yaml server.crt server.key
 
 2. 在配置文件中配置私钥文件、数字证书文件的路径和 HTTPS 端口，供 ListenAndServeTLS() 函数调用：
 
-[](./images/私钥.png)
+![](./images/私钥.png)
 
 3. 在 main 函数中增加 ListenAndServeTLS() 调用，启动 HTTPS 端口：
 
-[](./images/端口.png)
+![](./images/端口.png)
 
 main 函数的逻辑是：如果提供了 TLS 证书和私钥则启动 HTTPS 端口。
 
@@ -2766,7 +2766,7 @@ nginx -V            显示 Nginx 的版本、编译器版本和配置参数
 
 假定要访问的 API 服务器域名为 apiserver.com，在 /etc/nginx/nginx.conf 配置 API 服务器的 server 入口：
 
-[](./images/nginx.png)
+![](./images/nginx.png)
 
 完成 nginx.conf 内容如下：
 
@@ -2885,7 +2885,7 @@ $ curl -XGET -H "Content-Type: application/json" -H "Authorization: Bearer eyJhb
 
 在 /etc/nginx/nginx.conf 中添加 upstream 配置：
 
-[](./images/负载均衡.png)
+![](./images/负载均衡.png)
 
 ### 配置说明
 
@@ -2921,7 +2921,7 @@ done
 
 3. 为了展示哪个 API 被调用，需要在查询用户列表的入口函数（handler/user/list.go文件中的 List() 函数）中添加日志打印信息：
 
-[](./images/展示.png)
+![](./images/展示.png)
 
 4. 在相同服务器上启动两个不同的 HTTP 端口：8080 和 8082
 5. 执行 test.sh 脚本
@@ -2934,11 +2934,11 @@ $ ./test.sh
 
 apiserver1（8080 端口）：
 
-[](./images/转发.png)
+![](./images/转发.png)
 
 apiserver2（8082 端口）:
 
-[](./images/转发2)
+![](./images/转发2)
 
 在生产环境中，API 服务器所在的网络通常不能直接通过外网访问，需要通过可从外网访问的 Nginx 服务器，将请求转发到内网的 API 服务器。并且随着业务规模越来越大，请求量也会越来越大，这时候需要将 API 横向扩容，也需要 Nginx。所以在实际的 API 服务部署中 Nginx 经常能派上用场。通过本小节的学习，大家可以了解到如何在实际生产环境中部署 API 服务。
 
@@ -2959,7 +2959,7 @@ Keepalived 是一个高性能的服务器高可用或热备解决方案，Keepal
 
 Keepalived 以 VRRP 协议为基础来实现高可用性。VRRP（Virtual Router Redundancy Protocol，虚拟路由冗余协议）是用于实现路由器冗余的协议，它将两台或多台路由器设备虚拟成一个设备，对外提供虚拟路由器 IP（一个或多个），如下图所示。
 
-[](./images/keepalive.png)
+![](./images/keepalive.png)
 
 在上图中，将 Nginx + Keepalived 部署在两台服务器上，拥有两个真实的 IP（IP1 和 IP2），通过一定的技术（如 LVS）虚拟出一个虚拟 IP（VIP），外界请求通过访问 VIP 来访问服务。在两台 Nginx + Keepalived 的服务器上，同一时间只有一台会接管 VIP（叫做 Master）提供服务，另一台（叫做 Slave）会检测 Master 的心跳，当发现 Master 停止心跳后，Slave 会自动接管 VIP 以提供服务（此时，Slave 变成 Master）。通过这种方式来实现 Nginx 的高可用，通过第 19 节可以知道，Nginx 可以对后台 API 服务器做高可用，这样通过 Nginx + Keepalived 的组合方案就实现了整个 API 集群的高可用。
 
@@ -3283,7 +3283,7 @@ func Load(g *gin.Engine, mw ...gin.HandlerFunc) *gin.Engine {
 
 通过上一部分我们已经获取到了程序的 profile 信息，并且进入到了 pprof 的交互界面，在交互界面执行 topN 可以获取采样信息。
 
-[](./images/topn.png)
+![](./images/topn.png)
 
 通过 topN 的输出可以分析出哪些函数占用 CPU 时间片最多，这些函数可能存在性能问题。性能分析详细防范请参考：
 
@@ -3291,7 +3291,7 @@ func Load(g *gin.Engine, mw ...gin.HandlerFunc) *gin.Engine {
 
 用浏览器打开 profile001.svg：
 
-[](./images/profile.png)
+![](./images/profile.png)
 
 框框最大的函数耗时比较久，说明函数可能存在性能问题。
 
@@ -3328,11 +3328,11 @@ Swagger 还有一个强大的功能：可以通过 API 文档描述的参数来�
 
 浏览器访问截图：
 
-[](./images/浏览器.png)
+![](./images/浏览器.png)
 
 JSON 返回截图：
 
-[](./images/jsonswagger.png)
+![](./images/jsonswagger.png)
 
 ## Swagger 配置步骤
 
@@ -3368,7 +3368,7 @@ $ git clone https://github.com/swaggo/gin-swagger
 
 4. 在 router/router.go 中添加 swagger 路由（详见 demo17/router/router.go）
 
-[](./images/swagger路由.png)
+![](./images/swagger路由.png)
 
 5. 编写 API 注释，Swagger 中需要将相应的注释或注解编写到方法上，再利用生成器自动生成说明文件
 
@@ -3432,11 +3432,11 @@ $ swag init
 
 API 总览：
 
-[](./images/api总览.png)
+![](./images/api总览.png)
 
 点击 /login，查看 login API 详情：
 
-[](./images/apilogin.png)
+![](./images/apilogin.png)
 
 本小节介绍了如何生成 Swagger 文档，并演示了具体的效果。本小节也是动手操作的最后一个小节，至此恭喜你成功构建了一个企业级的 API 服务器，demo17 即为此 API 服务器的最终源码。
 
@@ -3576,7 +3576,7 @@ Transfer/sec:     61.46MB
 
 在 apiserver 中，Gin middleware： Logging 会记录请求参数和返回参数，该 middleare 很消耗性能，为了测试框架的性能，这里暂时将该 middleware 禁掉，在 main.go 函数中将 middleware.Logging() 一行注释掉，如图：
 
-[](./images/测试.png)
+![](./images/测试.png)
 
 编译并运行 apiserver
 
@@ -3593,11 +3593,11 @@ $ ./apiserver
 
 QPS & 平均响应时间:
 
-[](./images/平均响应时间.png)
+![](./images/平均响应时间.png)
 
 成功率
 
-[](./images/成功率.png)
+![](./images/成功率.png)
 
 通过上面二图可以看到，apiserver 在并发数为 5000 时，QPS 最大，为 146953，平均响应时间为 52.75ms，在并发数达到 50000 时，成功率开始下降。
 
@@ -3626,11 +3626,11 @@ func main() {
 
 QPS & 平均响应时间对比
 
-[](./images/平均响应时间对比.png)
+![](./images/平均响应时间对比.png)
 
 成功率对比
 
-[](./images/成功率对比.png)
+![](./images/成功率对比.png)
 
 通过上面两个对比图可以看出，apiserver 在 QPS、响应时间和成功率上都不如原生的 HTTP Server，特别是 QPS，最大 QPS 只有原生 HTTP Server 最大 QPS 的 22%，性能需要调优。
 
@@ -3745,11 +3745,11 @@ Showing top 50 nodes out of 199
 
 QPS & 平均响应时间对比
 
-[](./images/改进后平均响应时间对比.png)
+![](./images/改进后平均响应时间对比.png)
 
 成功率对比
 
-[](./images/改进后成功率对比.png)
+![](./images/改进后成功率对比.png)
 
 可以看到删除无用 Gin middleware 后，apiserver 的性能有了很大的提升，并发数为 25000 时，QPS 最大，为 553335（实际上并发数为 50000 时依然能达到很高的 QPS: 538144），响应时间为 222.91ms，QPS 很高，是原生 HTTP Server 的 85.34%。成功率基本跟原生的 HTTP Server 一致。优化后的 API 服务器可以支持很高的并发，在 20w+ 的并发下，API 服务器请求成功率可以达到 99.16%。这些性能远远好于企业级 API 服务器的要求。
 
