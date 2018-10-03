@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Refresh</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="/static/js/jquery-3.2.1.min.js"></script>
+</head>
+<body>
+<h1>Refresh — {{.User}} <a href="/">Leave</a></h1>
+
+<div class="chat page">
+    <div class="chatArea">
+        <ul class="messages">
+            {{range .Events}}
+                <li class="message">
+                <span class="username">{{.User}}</span>
+
+                    <span class="messageBody">{{.Text}}</span>
+
+                </li>
+            {{end}}
+        </ul>
+    </div>
+    <input class="inputMessage" placeholder="Type here..."/>
+</div>
+<script>
+    $(function () {
+
+        // Initialize variables
+        var $window = $(window);
+        var $messages = $('.messages'); // Messages area
+        var $inputMessage = $('.inputMessage'); // Input message input box
+
+        $inputMessage.focus();
+
+        var say = '/refresh/room?user={{.User}}';
+
+        // Keyboard events
+        $window.keydown(function (event) {
+            // When the client hits ENTER on their keyboard
+            if (event.which === 13) {
+                sendMessage();
+                window.location.reload();
+            }
+        });
+
+        // Sends a chat message
+        function sendMessage () {
+            var message = $inputMessage.val();
+            // Prevent markup from being injected into the message
+            $inputMessage.val('');
+            // if there is a non-empty message and a socket connection
+            if (message) {
+            $.post(say, {message: message})
+            }
+        };
+
+        // Gets the color of a username through our hash function
+        function getUsernameColor (username) {
+            // Compute hash code
+            var hash = 7;
+            for (var i = 0; i < username.length; i++) {
+                hash = username.charCodeAt(i) + (hash << 5) - hash;
+            }
+            // Calculate color
+            var index = Math.abs(hash % COLORS.length);
+            return COLORS[index];
+        }
+    })
+</script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+language: go
+
+go:
+  - "1.11"
+
+env:
+  - GO111MODULE=on
+
+script: go build app.go

@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Longpolling</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="/static/js/jquery-3.2.1.min.js"></script>
+</head>
+<body>
+<h1>Longpolling — {{.User}}
+    <a href="/">Leave</a></h1>
+
+<div class="chat page">
+    <div class="chatArea">
+        <ul class="messages"></ul>
+    </div>
+    <input class="inputMessage" placeholder="Type here..."/>
+</div>
+
+
+<script type="text/javascript">
+
+    $(function() {
+
+        var COLORS = [
+            '#e21400', '#91580f', '#f8a700', '#f78b00',
+            '#58dc00', '#287b00', '#a8f07a', '#4ae8c4',
+            '#3b88eb', '#3824aa', '#a700ff', '#d300e7'
+        ];
+
+        // Initialize variables
+        var $window = $(window);
+        var $messages = $('.messages'); // Messages area
+        var $inputMessage = $('.inputMessage'); // Input message input box
+
+        $inputMessage.focus();
+
+        var lastReceived = 0;
+        var waitMessages = '/longpolling/room/messages?lastReceived=';
+        var say = '/longpolling/room/messages?user={{.User}}';
+
+        // Keyboard events
+        $window.keydown(function (event) {
+            // When the client hits ENTER on their keyboard
+            if (event.which === 13) {
+                sendMessage();
+                console.log("sendmsg");
+
+            }
+        });
+
+
+        // Sends a chat message
+        function sendMessage () {
+            var message = $inputMessage.val();
+
+            $inputMessage.val('');
+            if (message) {
+                $.post(say, {message: message})
+            }
+        }
+
+        // Retrieve new messages
+        var getMessages = function() {
+            $.ajax({
+                url: waitMessages + lastReceived,
+                success: function(events) {
+                    $(events).each(function() {
+                        display(this);
+                        lastReceived = this.Timestamp;
+                    });
+                    getMessages();
+                },
+                dataType: 'json'
+            });
+        };
+
+        getMessages();
+
+        // Display a message
+        var display = function(data) {
+            console.log(event);
+            var msg = data.Text;
+            var usr = data.User;
+
+            var $usernameDiv = $('<span class="username"/>')
+                    .text(usr)
+                    .css('color', getUsernameColor(usr));
+            var $messageBodyDiv = $('<span class="messageBody">')
+                    .text(msg);
+
+            var typingClass = data.typing ? 'typing' : '';
+            var $messageDiv = $('<li class="message"/>')
+                    .data('username', usr)
+                    .addClass(typingClass)
+                    .append($usernameDiv, $messageBodyDiv);
+
+            $messages.append($messageDiv);
+
+            $messages[0].scrollTop = $messages[0].scrollHeight;
+        };
+
+
+        // Log a message
+        function log (message, options) {
+            var $el = $('<li>').addClass('log').text(message);
+            addMessageElement($el, options);
+        }
+
+        // Gets the color of a username through our hash function
+        function getUsernameColor (username) {
+            // Compute hash code
+            var hash = 7;
+            for (var i = 0; i < username.length; i++) {
+                hash = username.charCodeAt(i) + (hash << 5) - hash;
+            }
+            // Calculate color
+            var index = Math.abs(hash % COLORS.length);
+            return COLORS[index];
+        }
+
+        $inputMessage.on('input', function() {
+            console.log("typing!")
+        });
+
+        // Click events
+
+
+        // Focus input when clicking on the message input's border
+        $inputMessage.click(function () {
+            $inputMessage.focus();
+        });
+
+
+    });
+
+</script>
+</body>
+</html>
