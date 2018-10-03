@@ -1,7 +1,7 @@
 package routes
 
 import (
-	"chat-room/routes/chatroom"
+	"../routes/chatroom"
 	"github.com/gin-gonic/gin"
 	"net/http"
 )

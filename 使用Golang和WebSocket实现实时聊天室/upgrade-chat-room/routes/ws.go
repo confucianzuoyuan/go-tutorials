@@ -1,7 +1,7 @@
 package routes
 
 import (
-	"chat-room/routes/chatroom"
+	"../routes/chatroom"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"net/http"
