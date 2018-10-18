@@ -88,3 +88,95 @@ func indexOf(val int, nums []int) int {
 	return 0
 }
 ```
+
+3. 二分查找及其变种
+
+```go
+package main
+
+import (
+	"fmt"
+	"time"
+)
+
+func makeRange(min, max int) []int {
+	a := make([]int, max-min+1)
+	for i := range a {
+		a[i] = min + i
+	}
+	return a
+}
+
+func LinearSearch(array []int, t int) bool {
+	i := 0
+	for i < len(array) {
+		if array[i] == t {
+			return true
+		}
+		i++
+	}
+	return false
+}
+
+func BinarySearch(array []int, t int) bool {
+	left := 0
+	right := len(array) - 1
+
+	for left <= right {
+		mid := (left + right) / 2
+		if array[mid] < t {
+			left = mid + 1
+		} else if array[mid] > t {
+			right = mid - 1
+		} else {
+			return true
+		}
+	}
+
+	return false
+}
+
+func main() {
+	array := makeRange(0, 1000000000)
+	time1 := time.Now()
+	bool := LinearSearch(array, 1000000001)
+	time2 := time.Now()
+	fmt.Println("time2-time1: ", time2.Sub(time1))
+	fmt.Println("bool: ", bool)
+	time3 := time.Now()
+	bool1 := BinarySearch(array, 1000000001)
+	time4 := time.Now()
+	fmt.Println("time4-time3: ", time4.Sub(time3))
+	fmt.Println("bool1: ", bool1)
+}
+```
+
+```go
+package main
+
+import "fmt"
+
+func searchMatrix(matrix [][]int, t int) bool {
+        i := 0
+        j := len(matrix[0]) - 1
+        for i < len(matrix) && j >= 0 {
+                if matrix[i][j] == t {
+                        return true
+                } else if matrix[i][j] > t {
+                        j -= 1
+                } else {
+                        i += 1
+                }
+        }
+        return false
+}
+
+func main() {
+        matrix := [][]int{
+                []int{1, 3, 5, 7},
+                []int{10, 11, 16, 20},
+                []int{23, 30, 34, 50},
+        }
+        fmt.Println(searchMatrix(matrix, 16))
+}
+```
