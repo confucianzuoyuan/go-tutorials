@@ -180,3 +180,47 @@ func main() {
         fmt.Println(searchMatrix(matrix, 16))
 }
 ```
+
+4. 翻转链表
+
+```go
+package main
+
+import (
+	"fmt"
+)
+
+type ListNode struct {
+	Val  int
+	Next *ListNode
+}
+
+func reverseList(head *ListNode) *ListNode {
+	if nil == head {
+		return nil
+	}
+
+	dummy := head
+	tmp := head
+
+	for head != nil && head.Next != nil {
+		dummy = head.Next
+		head.Next = dummy.Next
+		dummy.Next = tmp
+		tmp = dummy
+	}
+
+	return dummy
+}
+
+func main() {
+	head := &ListNode{1, nil}
+	head.Next = &ListNode{2, nil}
+	head.Next.Next = &ListNode{3, nil}
+	tmp := reverseList(head)
+	for tmp != nil {
+		fmt.Println(tmp.Val)
+		tmp = tmp.Next
+	}
+}
+```
