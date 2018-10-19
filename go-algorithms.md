@@ -213,6 +213,24 @@ func reverseList(head *ListNode) *ListNode {
 	return dummy
 }
 
+func recursive(head *ListNode) {
+	if head == nil {
+		return
+	}
+
+	fmt.Println(head.Val)
+	recursive(head.Next)
+}
+
+func recursiveArray(array []int) {
+	if len(array) == 0 {
+		return
+	}
+
+	fmt.Println(array[0])
+	recursiveArray(array[1:])
+}
+
 func main() {
 	head := &ListNode{1, nil}
 	head.Next = &ListNode{2, nil}
@@ -222,5 +240,8 @@ func main() {
 		fmt.Println(tmp.Val)
 		tmp = tmp.Next
 	}
+	recursive(tmp)
+	array := []int{1, 2, 3, 4, 5}
+	recursiveArray(array)
 }
 ```
